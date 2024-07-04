@@ -1,0 +1,4 @@
+psutil
+requests
+pyopenssl
+beautifulsoup4

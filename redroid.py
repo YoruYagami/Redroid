@@ -111,7 +111,7 @@ def download_latest_jadx():
                 # Get the desktop path of the current user
                 desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
                 os.makedirs(desktop_path, exist_ok=True)
-                local_filepath = os.path.join(desktop_path, local_filename)
+                local_filepath = os.path.join(desktop_path, "jadx-gui.exe")
                 
                 print(f"Downloading {local_filename} from {download_url}")
                 with requests.get(download_url, stream=True) as r:
@@ -119,7 +119,7 @@ def download_latest_jadx():
                     with open(local_filepath, 'wb') as f:
                         for chunk in r.iter_content(chunk_size=8192):
                             f.write(chunk)
-                print(f"Downloaded {local_filename} to your Redroid folder on desktop: {local_filepath}")
+                print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in your Redroid folder on desktop: {local_filepath}")
                 return
         print("No suitable Jadx executable found in the latest release.")
     except Exception as e:
@@ -196,11 +196,29 @@ def download_latest_nuclei():
                 with ZipFile(local_filepath, 'r') as zip_ref:
                     zip_ref.extractall(desktop_path)
                 os.remove(local_filepath)
-                print(f"Downloaded and extracted Nuclei to your Redroid folder on desktop: {desktop_path}")
+                
+                # Move Nuclei to a location in PATH
+                nuclei_path = os.path.join(desktop_path, "nuclei.exe")
+                destination_path = os.path.join(os.environ['USERPROFILE'], 'AppData', 'Local', 'Programs', 'nuclei.exe')
+                shutil.move(nuclei_path, destination_path)
+                
+                # Remove README and LICENSE files
+                for file_name in os.listdir(desktop_path):
+                    if file_name.lower().startswith('readme') or file_name.lower() == 'license':
+                        os.remove(os.path.join(desktop_path, file_name))
+                
+                print(f"Downloaded and installed Nuclei. You can run it from anywhere using the terminal.")
+                
+                # Add the directory to PATH
+                add_to_path(os.path.dirname(destination_path))
                 return
         print("No suitable Nuclei executable found in the latest release.")
     except Exception as e:
         print(f"An error occurred while trying to download the latest version of Nuclei: {str(e)}")
+
+def add_to_path(new_path):
+    command = f'setx PATH "%PATH%;{new_path}"'
+    os.system(command)
 
 def check_nox_root():
     if nox_installation_path:
@@ -310,12 +328,28 @@ def list_installed_applications():
     print("Listing installed applications on Nox Emulator...")
     os.system("frida-ps -Uai")
 
+def install_mob_fs():
+    if shutil.which("docker"):
+        print("Installing Mob-FS...")
+        os.system("docker pull opensecurity/mobile-security-framework-mobsf:latest")
+        print("Mob-FS installed successfully.")
+    else:
+        print("Docker is not installed. Please install Docker first.")
+
+def run_mob_fs():
+    if shutil.which("docker"):
+        print("Running Mob-FS...")
+        os.system("docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest")
+    else:
+        print("Docker is not installed. Please install Docker first.")
+
 def show_main_menu():
     print("\nMain Menu")
     print("1. Install Tools")
-    print("2. NOX Player Options")
-    print("3. Frida")
-    print("4. Exit")
+    print("2. Run Tools")
+    print("3. NOX Player Options")
+    print("4. Frida")
+    print("5. Exit")
 
 def show_install_tools_menu():
     print("\nInstall Tools")
@@ -323,27 +357,34 @@ def show_install_tools_menu():
     print("2. Objection")
     print("3. reFlutter")
     print("4. Jadx")
-    print("5. Download apktool (.bat + .jar)")
-    print("6. Download nuclei")
-    print("7. Back")
+    print("5. apktool (.bat + .jar)")
+    print("6. Nuclei")
+    print("7. Mob-FS (docker)")
+    print("8. apkleaks")
+    print("9. Back")
+
+def show_run_tools_menu():
+    print("\nRun Tools")
+    print("1. Run Mob-FS (docker)")
+    print("2. Back")
 
 def show_nox_player_options_menu():
     print("\nNOX Player Options")
     print("1. Remove Ads From Nox emulator")
     print("2. Install Burp Certificate")
     print("3. Install Frida Server")
-    print("4. Run Frida Server")
-    print("5. Get ADB shell")
-    print("6. Check if root is enabled")
-    print("7. Print proxy status")
-    print("8. Set up/modify proxy")
-    print("9. Remove proxy")
-    print("10. Back")
+    print("4. Get ADB shell")
+    print("5. Check if root is enabled")
+    print("6. Print proxy status")
+    print("7. Set up/modify proxy")
+    print("8. Remove proxy")
+    print("9. Back")
 
 def show_frida_menu():
     print("\nFrida")
     print("1. List installed applications")
-    print("2. Back")
+    print("2. Run Frida Server")
+    print("3. Back")
 
 def main():
     while True:
@@ -368,11 +409,27 @@ def main():
                 elif tools_choice == '6':
                     download_latest_nuclei()
                 elif tools_choice == '7':
+                    install_mob_fs()
+                elif tools_choice == '8':
+                    install_tool("apkleaks")
+                elif tools_choice == '9':
                     break
                 else:
                     print("Invalid choice, please try again.")
 
         elif main_choice == '2':
+            while True:
+                show_run_tools_menu()
+                run_tools_choice = input("Enter your choice: ")
+                
+                if run_tools_choice == '1':
+                    run_mob_fs()
+                elif run_tools_choice == '2':
+                    break
+                else:
+                    print("Invalid choice, please try again.")
+
+        elif main_choice == '3':
             if nox_installation_path:
                 connection_result = connect_to_nox_adb()
                 print(connection_result)
@@ -392,20 +449,22 @@ def main():
                         elif nox_choice == '3':
                             install_frida_server()
                         elif nox_choice == '4':
-                            run_frida_server()
-                        elif nox_choice == '5':
                             open_adb_shell_from_nox()
-                        elif nox_choice == '6':
+                        elif nox_choice == '5':
                             check_nox_root()
-                        elif nox_choice == '7':
+                        elif nox_choice == '6':
                             get_nox_proxy_status()
-                        elif nox_choice == '8':
+                        elif nox_choice == '7':
+                            ipv4_addresses = get_local_ipv4_addresses()
+                            print("Local IPv4 addresses:")
+                            for ip in ipv4_addresses:
+                                print(ip)
                             ip = input("Enter the proxy IP address: ")
                             port = input("Enter the proxy port: ")
                             set_nox_proxy(ip, port)
-                        elif nox_choice == '9':
+                        elif nox_choice == '8':
                             remove_nox_proxy()
-                        elif nox_choice == '10':
+                        elif nox_choice == '9':
                             break
                         else:
                             print("Invalid choice, please try again.")
@@ -414,7 +473,7 @@ def main():
             else:
                 print("Nox player not installed or not running.")
 
-        elif main_choice == '3':
+        elif main_choice == '4':
             while True:
                 show_frida_menu()
                 frida_choice = input("Enter your choice: ")
@@ -422,11 +481,13 @@ def main():
                 if frida_choice == '1':
                     list_installed_applications()
                 elif frida_choice == '2':
+                    run_frida_server()
+                elif frida_choice == '3':
                     break
                 else:
                     print("Invalid choice, please try again.")
 
-        elif main_choice == '4':
+        elif main_choice == '5':
             print("Exiting...")
             break
         else:

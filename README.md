@@ -47,7 +47,6 @@ Once the script is running, you will see a main menu with various options. Here 
     - **Install Burp Certificate**: Install Burp Suite's CA certificate in the Nox emulator.
     - **Install Frida Server**: Install Frida server on the Nox emulator.
     - **Get ADB shell**: Open an ADB shell in the Nox emulator.
-    - **Check if root is enabled**: Check if the Nox emulator is rooted.
     - **Print proxy status**: Print the current proxy settings of the Nox emulator.
     - **Set up/modify proxy**: Set or modify the proxy settings for the Nox emulator.
     - **Remove proxy**: Remove the proxy settings from the Nox emulator.

@@ -36,12 +36,12 @@ def open_adb_shell_from_nox():
         print("Nox player not installed.")
 
 def get_local_ipv4_addresses():
-    ip_list = []
-    for iface_name in psutil.net_if_addrs():
-        for iface in psutil.net_if_addrs()[iface_name]:
-            if iface.family == socket.AF_INET:
-                ip_list.append(iface.address)
-    return ip_list
+    ip_dict = {}
+    for iface_name, iface_addresses in psutil.net_if_addrs().items():
+        for addr in iface_addresses:
+            if addr.family == socket.AF_INET:
+                ip_dict[iface_name] = addr.address
+    return ip_dict
 
 def try_download_certificate(ip, port):
     cert_url = f"http://{ip}:{port}/cert"
@@ -220,17 +220,6 @@ def add_to_path(new_path):
     command = f'setx PATH "%PATH%;{new_path}"'
     os.system(command)
 
-def check_nox_root():
-    if nox_installation_path:
-        adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell "su -c \'id\'"'
-        result = subprocess.run(adb_shell_command, shell=True, text=True, capture_output=True)
-        if 'uid=0(root)' in result.stdout:
-            print("Root is enabled on Nox Emulator.")
-        else:
-            print("Root is not enabled on Nox Emulator.")
-    else:
-        print("Nox player not installed.")
-
 def get_nox_proxy_status():
     if nox_installation_path:
         adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings get global http_proxy'
@@ -374,11 +363,10 @@ def show_nox_player_options_menu():
     print("2. Install Burp Certificate")
     print("3. Install Frida Server")
     print("4. Get ADB shell")
-    print("5. Check if root is enabled")
-    print("6. Print proxy status")
-    print("7. Set up/modify proxy")
-    print("8. Remove proxy")
-    print("9. Back")
+    print("5. Print proxy status")
+    print("6. Set up/modify proxy")
+    print("7. Remove proxy")
+    print("8. Back")
 
 def show_frida_menu():
     print("\nFrida")
@@ -451,20 +439,21 @@ def main():
                         elif nox_choice == '4':
                             open_adb_shell_from_nox()
                         elif nox_choice == '5':
-                            check_nox_root()
-                        elif nox_choice == '6':
                             get_nox_proxy_status()
-                        elif nox_choice == '7':
+                        elif nox_choice == '6':
                             ipv4_addresses = get_local_ipv4_addresses()
-                            print("Local IPv4 addresses:")
-                            for ip in ipv4_addresses:
-                                print(ip)
+                            print("\nLocal IPv4 addresses:")
+                            print("{:<30} {:<15}".format("Interface", "IP Address"))
+                            print("-" * 45)
+                            for iface, ip in ipv4_addresses.items():
+                                print("{:<30} {:<15}".format(iface, ip))
+                            print()
                             ip = input("Enter the proxy IP address: ")
                             port = input("Enter the proxy port: ")
                             set_nox_proxy(ip, port)
-                        elif nox_choice == '8':
+                        elif nox_choice == '7':
                             remove_nox_proxy()
-                        elif nox_choice == '9':
+                        elif nox_choice == '8':
                             break
                         else:
                             print("Invalid choice, please try again.")

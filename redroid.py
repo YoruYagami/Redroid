@@ -88,7 +88,7 @@ def install_burpsuite_certificate(port):
 
     # Check other local IP addresses
     ipv4_addresses = get_local_ipv4_addresses()
-    for ip in ipv4_addresses:
+    for ip in ipv4_addresses.values():
         if ip != '127.0.0.1' and try_download_certificate(ip, port):
             return
 

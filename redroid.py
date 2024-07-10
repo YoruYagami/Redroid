@@ -1,5 +1,6 @@
 import os
 import subprocess
+import platform
 import psutil
 import requests
 import socket
@@ -98,32 +99,48 @@ def install_tool(tool):
     subprocess.run(['pip', 'install', tool])
 
 def download_latest_jadx():
-    try:
-        response = requests.get("https://api.github.com/repos/skylot/jadx/releases/latest")
-        response.raise_for_status()
-        latest_release = response.json()
-        assets = latest_release.get('assets', [])
-        for asset in assets:
-            if 'no-jre-win.exe' in asset['name']:
-                download_url = asset['browser_download_url']
-                local_filename = asset['name']
-                
-                # Get the desktop path of the current user
-                desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-                os.makedirs(desktop_path, exist_ok=True)
-                local_filepath = os.path.join(desktop_path, "jadx-gui.exe")
-                
-                print(f"Downloading {local_filename} from {download_url}")
-                with requests.get(download_url, stream=True) as r:
-                    r.raise_for_status()
-                    with open(local_filepath, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in your Redroid folder on desktop: {local_filepath}")
-                return
-        print("No suitable Jadx executable found in the latest release.")
-    except Exception as e:
-        print(f"An error occurred while trying to download the latest version of Jadx: {str(e)}")
+    system = platform.system().lower()
+    if system == "linux":
+        # Check for specific Linux distributions
+        if os.path.exists("/etc/debian_version"):  # Debian
+            print("Detected Debian-based system (e.g., Kali Linux)")
+            os.system("sudo apt update && sudo apt install jadx -y")
+            print("Jadx installed successfully via apt.")
+        elif os.path.exists("/etc/arch-release"):  # Arch
+            print("Detected Arch Linux")
+            os.system("sudo pacman -Sy jadx --noconfirm")
+            print("Jadx installed successfully via pacman.")
+        else:
+            print("Unsupported Linux distribution. Please install Jadx manually.")
+    elif system == "windows":
+        try:
+            response = requests.get("https://api.github.com/repos/skylot/jadx/releases/latest")
+            response.raise_for_status()
+            latest_release = response.json()
+            assets = latest_release.get('assets', [])
+            for asset in assets:
+                if 'no-jre-win.exe' in asset['name']:
+                    download_url = asset['browser_download_url']
+                    local_filename = asset['name']
+                    
+                    # Get the desktop path of the current user
+                    desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
+                    os.makedirs(desktop_path, exist_ok=True)
+                    local_filepath = os.path.join(desktop_path, "jadx-gui.exe")
+                    
+                    print(f"Downloading {local_filename} from {download_url}")
+                    with requests.get(download_url, stream=True) as r:
+                        r.raise_for_status()
+                        with open(local_filepath, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in your Redroid folder on desktop: {local_filepath}")
+                    return
+            print("No suitable Jadx executable found in the latest release.")
+        except Exception as e:
+            print(f"An error occurred while trying to download the latest version of Jadx: {str(e)}")
+    else:
+        print(f"Unsupported operating system: {system}. Please install Jadx manually.")
 
 def get_latest_apktool_url():
     url = "https://bitbucket.org/iBotPeaches/apktool/downloads/"
@@ -138,34 +155,47 @@ def get_latest_apktool_url():
 
 def setup_apktool():
     try:
-        bat_url = "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat"
-        jar_url = get_latest_apktool_url()
-        if not jar_url:
-            print("Failed to find the latest apktool.jar")
-            return
-        
-        # Get the desktop path of the current user
-        desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-        os.makedirs(desktop_path, exist_ok=True)
-        
-        # Download apktool.bat
-        print(f"Downloading apktool.bat from {bat_url}")
-        response = requests.get(bat_url)
-        response.raise_for_status()
-        bat_path = os.path.join(desktop_path, "apktool.bat")
-        with open(bat_path, "wb") as file:
-            file.write(response.content)
-        
-        # Download apktool.jar
-        print(f"Downloading apktool.jar from {jar_url}")
-        response = requests.get(jar_url)
-        response.raise_for_status()
-        jar_path = os.path.join(desktop_path, "apktool.jar")
-        with open(jar_path, "wb") as file:
-            file.write(response.content)
-        
-        print(f"apktool setup completed. Files downloaded to your Redroid folder on desktop: {bat_path} and {jar_path}")
-        print("Please move apktool.bat and apktool.jar to the C:\\Windows folder manually.")
+        system = platform.system().lower()
+        if system == "linux":
+            distro_info = os.popen('cat /etc/*release').read().lower()
+            if 'kali' in distro_info or 'debian' in distro_info or 'ubuntu' in distro_info:
+                os.system('sudo apt update && sudo apt install apktool -y')
+            elif 'arch' in distro_info or 'manjaro' in distro_info:
+                os.system('sudo pacman -Syu apktool --noconfirm')
+            else:
+                print("Unsupported Linux distribution")
+                return
+        elif system == "windows":
+            bat_url = "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat"
+            jar_url = get_latest_apktool_url()
+            if not jar_url:
+                print("Failed to find the latest apktool.jar")
+                return
+            
+            # Get the desktop path of the current user
+            desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
+            os.makedirs(desktop_path, exist_ok=True)
+            
+            # Download apktool.bat
+            print(f"Downloading apktool.bat from {bat_url}")
+            response = requests.get(bat_url)
+            response.raise_for_status()
+            bat_path = os.path.join(desktop_path, "apktool.bat")
+            with open(bat_path, "wb") as file:
+                file.write(response.content)
+            
+            # Download apktool.jar
+            print(f"Downloading apktool.jar from {jar_url}")
+            response = requests.get(jar_url)
+            response.raise_for_status()
+            jar_path = os.path.join(desktop_path, "apktool.jar")
+            with open(jar_path, "wb") as file:
+                file.write(response.content)
+            
+            print(f"apktool setup completed. Files downloaded to your Redroid folder on desktop: {bat_path} and {jar_path}")
+            print("Please move apktool.bat and apktool.jar to the C:\\Windows folder manually.")
+        else:
+            print("Unsupported Operating System")
     except Exception as e:
         print(f"An error occurred while setting up apktool: {str(e)}")
 
@@ -175,44 +205,52 @@ def download_latest_nuclei():
         response = requests.get(latest_release_url)
         response.raise_for_status()
         latest_release = response.json()
-        for asset in latest_release['assets']:
-            if 'windows_amd64.zip' in asset['name']:
-                download_url = asset['browser_download_url']
-                local_filename = asset['name']
-                
-                # Get the desktop path of the current user
-                desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-                os.makedirs(desktop_path, exist_ok=True)
-                local_filepath = os.path.join(desktop_path, local_filename)
-                
-                print(f"Downloading {local_filename} from {download_url}")
-                with requests.get(download_url, stream=True) as r:
-                    r.raise_for_status()
-                    with open(local_filepath, 'wb') as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                
-                # Extract the zip file
-                with ZipFile(local_filepath, 'r') as zip_ref:
-                    zip_ref.extractall(desktop_path)
-                os.remove(local_filepath)
-                
-                # Move Nuclei to a location in PATH
-                nuclei_path = os.path.join(desktop_path, "nuclei.exe")
-                destination_path = os.path.join(os.environ['USERPROFILE'], 'AppData', 'Local', 'Programs', 'nuclei.exe')
-                shutil.move(nuclei_path, destination_path)
-                
-                # Remove README and LICENSE files
-                for file_name in os.listdir(desktop_path):
-                    if file_name.lower().startswith('readme') or file_name.lower() == 'license':
-                        os.remove(os.path.join(desktop_path, file_name))
-                
-                print(f"Downloaded and installed Nuclei. You can run it from anywhere using the terminal.")
-                
-                # Add the directory to PATH
-                add_to_path(os.path.dirname(destination_path))
-                return
-        print("No suitable Nuclei executable found in the latest release.")
+
+        system = platform.system().lower()
+        if system == "linux":
+            os.system('go install github.com/projectdiscovery/nuclei/cmd/nuclei@latest')
+            print("Nuclei installed successfully using go install.")
+        elif system == "windows":
+            for asset in latest_release['assets']:
+                if 'windows_amd64.zip' in asset['name']:
+                    download_url = asset['browser_download_url']
+                    local_filename = asset['name']
+                    
+                    # Get the desktop path of the current user
+                    desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
+                    os.makedirs(desktop_path, exist_ok=True)
+                    local_filepath = os.path.join(desktop_path, local_filename)
+                    
+                    print(f"Downloading {local_filename} from {download_url}")
+                    with requests.get(download_url, stream=True) as r:
+                        r.raise_for_status()
+                        with open(local_filepath, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                    
+                    # Extract the zip file
+                    with ZipFile(local_filepath, 'r') as zip_ref:
+                        zip_ref.extractall(desktop_path)
+                    os.remove(local_filepath)
+                    
+                    # Move Nuclei to a location in PATH
+                    nuclei_path = os.path.join(desktop_path, "nuclei.exe")
+                    destination_path = os.path.join(os.environ['USERPROFILE'], 'AppData', 'Local', 'Programs', 'nuclei.exe')
+                    shutil.move(nuclei_path, destination_path)
+                    
+                    # Remove README and LICENSE files
+                    for file_name in os.listdir(desktop_path):
+                        if file_name.lower().startswith('readme') or file_name.lower() == 'license':
+                            os.remove(os.path.join(desktop_path, file_name))
+                    
+                    print(f"Downloaded and installed Nuclei. You can run it from anywhere using the terminal.")
+                    
+                    # Add the directory to PATH
+                    add_to_path(os.path.dirname(destination_path))
+                    return
+            print("No suitable Nuclei executable found in the latest release.")
+        else:
+            print("Unsupported Operating System")
     except Exception as e:
         print(f"An error occurred while trying to download the latest version of Nuclei: {str(e)}")
 
@@ -307,7 +345,6 @@ def run_frida_server():
         print("Frida Server is running...")
         print("Below Some Useful commands of Frida-Tools")
         print("List installed applications: frida-ps -Uai")
-        print("Frida Script Injection: frida -U -l fridascript.js -f com.package.name")
         runfridaserver = f'\"{nox_installation_path}\\nox_adb.exe\"  shell /data/local/tmp/frida-server'
         os.system(runfridaserver)        
     else:
@@ -346,7 +383,7 @@ def show_install_tools_menu():
     print("2. Objection")
     print("3. reFlutter")
     print("4. Jadx")
-    print("5. apktool (.bat + .jar)")
+    print("5. apktool")
     print("6. Nuclei")
     print("7. Mob-FS (docker)")
     print("8. apkleaks")

@@ -369,6 +369,68 @@ def run_mob_fs():
     else:
         print("Docker is not installed. Please install Docker first.")
 
+def run_nuclei_against_apk():
+    # Get the path to the APK file
+    apk_path = input("Enter the path to the APK file: ").strip()
+    if not os.path.exists(apk_path):
+        print(f"Error: The file {apk_path} does not exist.")
+        return
+    
+    # Set the output directory to the current directory
+    script_dir = os.getcwd()
+    output_dir = os.path.join(script_dir, apk_path.rsplit('.', 1)[0])  # Remove the .apk extension
+    
+    apktool_command = "apktool" if platform.system().lower() != "windows" else "apktool.bat"
+    
+    if os.path.exists(output_dir):
+        overwrite = input(f"The directory {output_dir} already exists. Do you want to overwrite it? (y/n): ").strip().lower()
+        if overwrite not in ['y', 'yes']:
+            print("Operation cancelled.")
+            return
+        else:
+            try:
+                subprocess.run([apktool_command, "d", apk_path, "-o", output_dir, "-f"], check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Error: Failed to decompile APK. {e}")
+                return
+            except FileNotFoundError as e:
+                print(f"Error: {e}. Ensure apktool is installed and in your PATH.")
+                return
+    else:
+        try:
+            subprocess.run([apktool_command, "d", apk_path, "-o", output_dir], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to decompile APK. {e}")
+            return
+        except FileNotFoundError as e:
+            print(f"Error: {e}. Ensure apktool is installed and in your PATH.")
+            return
+    
+    # Get the path to the Nuclei templates directory
+    templates_path = input("Enter the path to the nuclei templates you want to use: ").strip()
+    if not os.path.exists(templates_path):
+        print(f"Error: The directory {templates_path} does not exist.")
+        return
+
+    # Run nuclei and capture the output
+    try:
+        result = subprocess.run(["nuclei", "-target", output_dir, "-t", templates_path], check=True, capture_output=True, text=True)
+        print(result.stdout)
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Failed to run nuclei. {e}")
+        return
+    
+    # Ask the user if they want to save the output
+    save_output = input("Do you want to save the output? (y/n): ").strip().lower()
+    if save_output in ['y', 'yes']:
+        output_file = os.path.join(script_dir, f"{os.path.basename(output_dir)}_nuclei_output.txt")
+        with open(output_file, "w") as file:
+            file.write(result.stdout)
+        
+        print(f"Output saved to {output_file}")
+
+    print("Analysis complete.")
+
 def show_main_menu():
     print("\nMain Menu")
     print("1. Install Tools")
@@ -392,7 +454,8 @@ def show_install_tools_menu():
 def show_run_tools_menu():
     print("\nRun Tools")
     print("1. Run Mob-FS (docker)")
-    print("2. Back")
+    print("2. Run nuclei against apk")
+    print("3. Back")
 
 def show_nox_player_options_menu():
     print("\nNOX Player Options")
@@ -450,6 +513,8 @@ def main():
                 if run_tools_choice == '1':
                     run_mob_fs()
                 elif run_tools_choice == '2':
+                    run_nuclei_against_apk()
+                elif run_tools_choice == '3':
                     break
                 else:
                     print("Invalid choice, please try again.")

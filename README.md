@@ -34,13 +34,14 @@ Once the script is running, you will see a main menu with various options. Here 
     - **Objection**: Install objection.
     - **reFlutter**: Install reFlutter.
     - **Jadx**: Download the latest Jadx GUI.
-    - **Apktool (.bat + .jar)**: Download and set up Apktool.
+    - **Apktool**: Download and set up Apktool.
     - **Nuclei**: Download and install Nuclei.
     - **Mob-FS (docker)**: Install Mob-FS using Docker.
     - **apkleaks**: Install apkleaks.
 
 2. **Run Tools**:
     - **Run Mob-FS (docker)**: Run Mob-FS in a Docker container.
+    - **Run nuclei against APK**: Decompile and Vuln Scan APK with custom nuclei templates
 
 3. **NOX Player Options**:
     - **Remove Ads From Nox emulator**: Remove ads and bloatware from the Nox emulator.

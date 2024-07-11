@@ -3,3 +3,4 @@ requests
 pyOpenSSL
 beautifulsoup4
 lxml
+shlex

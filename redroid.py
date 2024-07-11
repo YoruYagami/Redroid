@@ -11,6 +11,7 @@ from zipfile import ZipFile
 from OpenSSL import crypto
 from requests.exceptions import ConnectionError
 from bs4 import BeautifulSoup
+import shlex
 
 def find_nox_installation_path():
     for process in psutil.process_iter(['pid', 'name', 'exe']):
@@ -338,18 +339,86 @@ def install_frida_server():
     else:
         print("Frida Tools is not installed on this system.")
 
+def is_frida_server_running():
+    try:
+        check_command = [os.path.join(nox_installation_path, "nox_adb.exe"), "shell", "pgrep", "-f", "frida-server"]
+        result = subprocess.run(check_command, capture_output=True, text=True)
+        return result.returncode == 0  # Returncode 0 means the process is running
+    except Exception as e:
+        print(f"Error checking if Frida server is running: {str(e)}")
+        return False
+
 def run_frida_server():
     if nox_installation_path:
+        if is_frida_server_running():
+            print("Frida server is already running.")
+            return
+
         print("Starting Frida Server in the background...")
-        runfridaserver = f'\"{nox_installation_path}\\nox_adb.exe\" shell /data/local/tmp/frida-server &'
-        subprocess.Popen(runfridaserver, shell=True)
-        print("Frida Server started.")
+
+        command = [os.path.join(nox_installation_path, "nox_adb.exe"), "shell", "/data/local/tmp/frida-server"]
+        
+        try:
+            if platform.system().lower() == 'windows':
+                subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:  # Linux and macOS
+                subprocess.Popen(command)
+            
+            print("Frida Server should be running in the background.")
+        except Exception as e:
+            print(f"Failed to start Frida server: {str(e)}")
     else:
-        print("Frida server not started on the Nox Player.")
+        print("Nox player not installed or Frida server not started on the Nox Player.")
 
 def list_installed_applications():
     print("Listing installed applications on Nox Emulator...")
     os.system("frida-ps -Uai")
+
+def list_running_apps():
+    try:
+        result = subprocess.run(['frida-ps', '-U', '-a'], capture_output=True, text=True)
+        print("Currently running applications:")
+        print(result.stdout)
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Failed to list running applications. {e}")
+
+def run_ssl_pinning_bypass():
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
+    if os.path.exists(script_path):
+        list_running_apps()
+        app_package = input("Enter the app package name to run the SSL pinning bypass on: ").strip()
+        
+        # Check if Frida Gadget is embedded and the app is running
+        try:
+            # Start the app and attach Frida
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            print("SSL pinning bypass script executed successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to execute SSL pinning bypass script. {e}")
+    else:
+        print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
+
+def run_root_check_bypass():
+    if not is_frida_server_running():
+        run_frida_server()
+        if not is_frida_server_running():
+            print("Error: Frida server is not running. Cannot proceed with root check bypass.")
+            return
+    
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
+    if os.path.exists(script_path):
+        list_running_apps()
+        app_package = input("Enter the app package name to run the root check bypass on: ").strip()
+        
+        # Check if Frida Gadget is embedded and the app is running
+        try:
+            # Start the app and attach Frida
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            print("Root check bypass script executed successfully.")
+        except subprocess.CalledProcessError as e:
+            print(f"Error: Failed to execute root check bypass script. {e}")
+    else:
+        print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
 
 def install_mob_fs():
     if shutil.which("docker"):
@@ -451,7 +520,7 @@ def show_install_tools_menu():
 def show_run_tools_menu():
     print("\nRun Tools")
     print("1. Run Mob-FS (docker)")
-    print("2. Run nuclei against apk")
+    print("2. Run nuclei against APK")
     print("3. Back")
 
 def show_nox_player_options_menu():
@@ -467,9 +536,11 @@ def show_nox_player_options_menu():
 
 def show_frida_menu():
     print("\nFrida")
-    print("1. Run Frida Server in the background")
+    print("1. Run Frida Server")
     print("2. List installed applications")
-    print("3. Back")
+    print("3. Run SSL Pinning Bypass")
+    print("4. Run Root Check Bypass")  # Added new option here
+    print("5. Back")
 
 def main():
     while True:
@@ -569,8 +640,12 @@ def main():
                 if frida_choice == '1':
                     run_frida_server()
                 elif frida_choice == '2':
-                   list_installed_applications()
+                    list_installed_applications()
                 elif frida_choice == '3':
+                    run_ssl_pinning_bypass()
+                elif frida_choice == '4':
+                    run_root_check_bypass()
+                elif frida_choice == '5':
                     break
                 else:
                     print("Invalid choice, please try again.")

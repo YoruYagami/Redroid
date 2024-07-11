@@ -4,6 +4,12 @@ Welcome to **Redroid**! Enhance your mobile security testing capabilities with t
 
 ## 🛠️ Installation
 
+### Prerequisites
+- Python 3.6 or higher
+- Git
+
+### Steps
+
 1. **Clone the repository**:
     ```sh
     git clone https://github.com/yourusername/redroid.git
@@ -11,10 +17,7 @@ Welcome to **Redroid**! Enhance your mobile security testing capabilities with t
     ```
 
 2. **Install dependencies**:
-    Create a virtual environment and install required Python packages.
     ```sh
-    python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
     pip install -r requirements.txt
     ```
 
@@ -41,7 +44,7 @@ Once the script is running, you will see a main menu with various options. Here 
 
 2. **Run Tools**:
     - **Run Mob-FS (docker)**: Run Mob-FS in a Docker container.
-    - **Run nuclei against APK**: Decompile and Vuln Scan APK with custom nuclei templates
+    - **Run nuclei against APK**: Decompile and run Nuclei vulnerability scan on an APK with custom templates.
 
 3. **NOX Player Options**:
     - **Remove Ads From Nox emulator**: Remove ads and bloatware from the Nox emulator.
@@ -55,6 +58,8 @@ Once the script is running, you will see a main menu with various options. Here 
 4. **Frida**:
     - **Run Frida Server**: Start the Frida server in the background on the Nox emulator.
     - **List installed applications**: List all installed applications on the device.
+    - **Run SSL Pinning Bypass**: Run an SSL pinning bypass script on a specified application.
+    - **Run Root Check Bypass**: Run a root check bypass script on a specified application.
 
 5. **Exit**: Exit the application.
 

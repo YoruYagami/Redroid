@@ -478,9 +478,17 @@ def run_nuclei_against_apk():
         print(f"Error: The directory {templates_path} does not exist.")
         return
 
+    # Ask the user for the severity level
+    severity_level = input("Enter the severity level (low, medium, high, critical) you want to use (leave blank for none): ").strip().lower()
+    
+    nuclei_command = ["nuclei", "-target", output_dir, "-t", templates_path]
+    
+    if severity_level:
+        nuclei_command.extend(["-severity", severity_level])
+
     # Run nuclei and capture the output
     try:
-        result = subprocess.run(["nuclei", "-target", output_dir, "-t", templates_path], check=True, capture_output=True, text=True)
+        result = subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
         print(result.stdout)
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to run nuclei. {e}")

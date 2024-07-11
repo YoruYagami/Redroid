@@ -123,10 +123,9 @@ def download_latest_jadx():
                     download_url = asset['browser_download_url']
                     local_filename = asset['name']
                     
-                    # Get the desktop path of the current user
-                    desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-                    os.makedirs(desktop_path, exist_ok=True)
-                    local_filepath = os.path.join(desktop_path, "jadx-gui.exe")
+                    # Get the current directory path of the script
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    local_filepath = os.path.join(script_dir, "jadx-gui.exe")
                     
                     print(f"Downloading {local_filename} from {download_url}")
                     with requests.get(download_url, stream=True) as r:
@@ -134,7 +133,7 @@ def download_latest_jadx():
                         with open(local_filepath, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
-                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in your Redroid folder on desktop: {local_filepath}")
+                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
                     return
             print("No suitable Jadx executable found in the latest release.")
         except Exception as e:
@@ -172,15 +171,14 @@ def setup_apktool():
                 print("Failed to find the latest apktool.jar")
                 return
             
-            # Get the desktop path of the current user
-            desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-            os.makedirs(desktop_path, exist_ok=True)
+            # Get the current directory path of the script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
             
             # Download apktool.bat
             print(f"Downloading apktool.bat from {bat_url}")
             response = requests.get(bat_url)
             response.raise_for_status()
-            bat_path = os.path.join(desktop_path, "apktool.bat")
+            bat_path = os.path.join(script_dir, "apktool.bat")
             with open(bat_path, "wb") as file:
                 file.write(response.content)
             
@@ -188,16 +186,17 @@ def setup_apktool():
             print(f"Downloading apktool.jar from {jar_url}")
             response = requests.get(jar_url)
             response.raise_for_status()
-            jar_path = os.path.join(desktop_path, "apktool.jar")
+            jar_path = os.path.join(script_dir, "apktool.jar")
             with open(jar_path, "wb") as file:
                 file.write(response.content)
             
-            print(f"apktool setup completed. Files downloaded to your Redroid folder on desktop: {bat_path} and {jar_path}")
+            print(f"apktool setup completed. Files downloaded to the script directory: {bat_path} and {jar_path}")
             print("Please move apktool.bat and apktool.jar to the C:\\Windows folder manually.")
         else:
             print("Unsupported Operating System")
     except Exception as e:
         print(f"An error occurred while setting up apktool: {str(e)}")
+
 
 def download_latest_nuclei():
     try:
@@ -216,10 +215,9 @@ def download_latest_nuclei():
                     download_url = asset['browser_download_url']
                     local_filename = asset['name']
                     
-                    # Get the desktop path of the current user
-                    desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop', 'Redroid')
-                    os.makedirs(desktop_path, exist_ok=True)
-                    local_filepath = os.path.join(desktop_path, local_filename)
+                    # Get the current directory path of the script
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    local_filepath = os.path.join(script_dir, local_filename)
                     
                     print(f"Downloading {local_filename} from {download_url}")
                     with requests.get(download_url, stream=True) as r:
@@ -230,18 +228,18 @@ def download_latest_nuclei():
                     
                     # Extract the zip file
                     with ZipFile(local_filepath, 'r') as zip_ref:
-                        zip_ref.extractall(desktop_path)
+                        zip_ref.extractall(script_dir)
                     os.remove(local_filepath)
                     
                     # Move Nuclei to a location in PATH
-                    nuclei_path = os.path.join(desktop_path, "nuclei.exe")
-                    destination_path = os.path.join(os.environ['USERPROFILE'], 'AppData', 'Local', 'Programs', 'nuclei.exe')
+                    nuclei_path = os.path.join(script_dir, "nuclei.exe")
+                    destination_path = os.path.join(script_dir, 'nuclei.exe')
                     shutil.move(nuclei_path, destination_path)
                     
                     # Remove README and LICENSE files
-                    for file_name in os.listdir(desktop_path):
+                    for file_name in os.listdir(script_dir):
                         if file_name.lower().startswith('readme') or file_name.lower() == 'license':
-                            os.remove(os.path.join(desktop_path, file_name))
+                            os.remove(os.path.join(script_dir, file_name))
                     
                     print(f"Downloaded and installed Nuclei. You can run it from anywhere using the terminal.")
                     
@@ -342,11 +340,10 @@ def install_frida_server():
 
 def run_frida_server():
     if nox_installation_path:
-        print("Frida Server is running...")
-        print("Below Some Useful commands of Frida-Tools")
-        print("List installed applications: frida-ps -Uai")
-        runfridaserver = f'\"{nox_installation_path}\\nox_adb.exe\"  shell /data/local/tmp/frida-server'
-        os.system(runfridaserver)        
+        print("Starting Frida Server in the background...")
+        runfridaserver = f'\"{nox_installation_path}\\nox_adb.exe\" shell /data/local/tmp/frida-server &'
+        subprocess.Popen(runfridaserver, shell=True)
+        print("Frida Server started.")
     else:
         print("Frida server not started on the Nox Player.")
 
@@ -470,8 +467,8 @@ def show_nox_player_options_menu():
 
 def show_frida_menu():
     print("\nFrida")
-    print("1. List installed applications")
-    print("2. Run Frida Server")
+    print("1. Run Frida Server in the background")
+    print("2. List installed applications")
     print("3. Back")
 
 def main():
@@ -570,9 +567,9 @@ def main():
                 frida_choice = input("Enter your choice: ")
 
                 if frida_choice == '1':
-                    list_installed_applications()
-                elif frida_choice == '2':
                     run_frida_server()
+                elif frida_choice == '2':
+                   list_installed_applications()
                 elif frida_choice == '3':
                     break
                 else:

@@ -53,8 +53,8 @@ Once the script is running, you will see a main menu with various options. Here 
     - **Remove proxy**: Remove the proxy settings from the Nox emulator.
 
 4. **Frida**:
+    - **Run Frida Server**: Start the Frida server in the background on the Nox emulator.
     - **List installed applications**: List all installed applications on the device.
-    - **Run Frida Server**: Start the Frida server on the Nox emulator.
 
 5. **Exit**: Exit the application.
 
@@ -69,4 +69,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 🎉 **Enjoy using Redroid!** If you have any questions or run into any issues, feel free to open an issue on GitHub.
-

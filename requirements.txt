@@ -1,5 +1,5 @@
 psutil
 requests
-beautifulsoup4
 pyOpenSSL
+beautifulsoup4
 lxml

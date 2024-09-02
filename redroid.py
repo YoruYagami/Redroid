@@ -11,6 +11,7 @@ from zipfile import ZipFile
 from OpenSSL import crypto
 from requests.exceptions import ConnectionError
 from bs4 import BeautifulSoup
+from colorama import init, Fore, Style
 import shlex
 
 def find_nox_installation_path():
@@ -84,17 +85,23 @@ def try_download_certificate(ip, port):
         return False
 
 def install_burpsuite_certificate(port):
+    print(Fore.CYAN + "🔍 Attempting to download the Burp Suite certificate from localhost..." + Style.RESET_ALL)
+    
     # Check localhost first
     if try_download_certificate('127.0.0.1', port):
+        print(Fore.GREEN + "✅ Successfully downloaded and installed the Burp Suite certificate from localhost." + Style.RESET_ALL)
         return
 
     # Check other local IP addresses
+    print(Fore.CYAN + "🔍 Checking other local IP addresses for Burp Suite certificate..." + Style.RESET_ALL)
     ipv4_addresses = get_local_ipv4_addresses()
+    
     for ip in ipv4_addresses.values():
         if ip != '127.0.0.1' and try_download_certificate(ip, port):
+            print(Fore.GREEN + f"✅ Successfully downloaded and installed the Burp Suite certificate from {ip}." + Style.RESET_ALL)
             return
 
-    print("Failed to download the Burp Suite certificate from any local IP address.")
+    print(Fore.RED + "❌ Failed to download the Burp Suite certificate from any local IP address." + Style.RESET_ALL)
 
 def install_tool(tool):
     subprocess.run(['pip', 'install', tool])
@@ -199,109 +206,123 @@ def setup_apktool():
         print(f"An error occurred while setting up apktool: {str(e)}")
 
 
-def download_latest_nuclei():
+
+def is_admin():
+    """Check if the script is running with administrative privileges."""
     try:
-        latest_release_url = "https://api.github.com/repos/projectdiscovery/nuclei/releases/latest"
-        response = requests.get(latest_release_url)
-        response.raise_for_status()
-        latest_release = response.json()
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
 
-        system = platform.system().lower()
-        if system == "linux":
-            os.system('go install github.com/projectdiscovery/nuclei/cmd/nuclei@latest')
-            print("Nuclei installed successfully using go install.")
-        elif system == "windows":
-            for asset in latest_release['assets']:
-                if 'windows_amd64.zip' in asset['name']:
-                    download_url = asset['browser_download_url']
-                    local_filename = asset['name']
-                    
-                    # Get the current directory path of the script
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    local_filepath = os.path.join(script_dir, local_filename)
-                    
-                    print(f"Downloading {local_filename} from {download_url}")
-                    with requests.get(download_url, stream=True) as r:
-                        r.raise_for_status()
-                        with open(local_filepath, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                    
-                    # Extract the zip file
-                    with ZipFile(local_filepath, 'r') as zip_ref:
-                        zip_ref.extractall(script_dir)
-                    os.remove(local_filepath)
-                    
-                    # Move Nuclei to a location in PATH
-                    nuclei_path = os.path.join(script_dir, "nuclei.exe")
-                    destination_path = os.path.join(script_dir, 'nuclei.exe')
-                    shutil.move(nuclei_path, destination_path)
-                    
-                    # Remove README and LICENSE files
-                    for file_name in os.listdir(script_dir):
-                        if file_name.lower().startswith('readme') or file_name.lower() == 'license':
-                            os.remove(os.path.join(script_dir, file_name))
-                    
-                    print(f"Downloaded and installed Nuclei. You can run it from anywhere using the terminal.")
-                    
-                    # Add the directory to PATH
-                    add_to_path(os.path.dirname(destination_path))
-                    return
-            print("No suitable Nuclei executable found in the latest release.")
+def add_to_system_path(path):
+    """Add a directory to the system PATH environment variable."""
+    subprocess.run(f'setx /M PATH "%PATH%;{path}"', shell=True)
+    print(f"Added {path} to the system PATH.")
+
+def check_nuclei_installed():
+    """Check if Nuclei can be executed from the terminal."""
+    try:
+        subprocess.run(["nuclei", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def install_nuclei():
+    """Install Nuclei using Go and ensure it's executable from any terminal."""
+    if not check_go_installed():
+        print("Go is not installed on your system. Please install Go and try again.")
+        return
+    
+    try:
+        print("Installing Nuclei...")
+        subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
+        print("Nuclei installed successfully.")
+    
+        if not check_nuclei_installed():
+            go_bin_path = os.path.expanduser("~\\go\\bin")
+            add_to_system_path(go_bin_path)
+            
+            if not check_nuclei_installed():
+                print("Running with elevated privileges to add Nuclei to PATH...")
+                if is_admin():
+                    add_to_system_path(go_bin_path)
+                else:
+                    # Elevate to admin only for modifying the PATH
+                    print("Requesting administrative privileges to modify PATH...")
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, "elevate", 1)
+                    return  # Exit after elevating to avoid re-running as admin
+            
+            if not check_nuclei_installed():
+                print("Nuclei is still not executable. Please check your PATH settings manually.")
+            else:
+                print("Nuclei is now executable from the terminal.")
         else:
-            print("Unsupported Operating System")
+            print("Nuclei is already executable from the terminal.")
+    
     except Exception as e:
-        print(f"An error occurred while trying to download the latest version of Nuclei: {str(e)}")
+        print(f"An error occurred during Nuclei installation: {str(e)}")
 
-def add_to_path(new_path):
-    command = f'setx PATH "%PATH%;{new_path}"'
-    os.system(command)
+def check_go_installed():
+    """Check if Go is installed."""
+    try:
+        subprocess.run(["go", "version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
 
 def get_nox_proxy_status():
     if nox_installation_path:
         adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings get global http_proxy'
         result = subprocess.run(adb_shell_command, shell=True, text=True, capture_output=True)
         if result.stdout.strip():
-            print(f"Current proxy: {result.stdout.strip()}")
+            print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + f"{result.stdout.strip()}" + Style.RESET_ALL)
         else:
-            print("No proxy is currently set.")
+            print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
     else:
-        print("Nox player not installed.")
+        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
 
 def set_nox_proxy(ip, port):
     if nox_installation_path:
         adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings put global http_proxy {ip}:{port}'
         subprocess.run(adb_shell_command, shell=True, text=True)
-        print(f"Proxy set to {ip}:{port} on Nox Emulator.")
+        print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on Nox Emulator." + Style.RESET_ALL)
     else:
-        print("Nox player not installed.")
+        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
 
 def remove_nox_proxy():
     if nox_installation_path:
         adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings delete global http_proxy'
         subprocess.run(adb_shell_command, shell=True, text=True)
-        print("Proxy removed from Nox Emulator.")
+        print(Fore.GREEN + "✅ Proxy removed from Nox Emulator." + Style.RESET_ALL)
     else:
-        print("Nox player not installed.")
+        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
 
 def remove_ads_and_bloatware():
-    print("Removing Bloatware and Ads from Nox Emulator...")
+    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from Nox Emulator..." + Style.RESET_ALL)
+    
     debloatroot = f'\"{nox_installation_path}\\nox_adb.exe\" root'
     os.system(debloatroot)
+    
     debloatremount = f'\"{nox_installation_path}\\nox_adb.exe\" remount'
-    os.system(debloatremount)    
+    os.system(debloatremount)
+    
     bloatware_apps = [
         'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
         'Helper', 'LiveWallpapersPicker', 'PrintRecommendationService', 'PrintSpooler',
         'WallpaperBackup', 'newAppNameEn'
     ]
+    
     for app in bloatware_apps:
+        print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
         os.system(f'\"{nox_installation_path}\\nox_adb.exe\" shell rm -rf /system/app/{app}')
-    print("Bloatware removed successfully.")
+    
+    print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
 
-    print("Rebooting the Nox Emulator...")
+    print(Fore.CYAN + "🔄 Rebooting the Nox Emulator..." + Style.RESET_ALL)
     os.system(f'\"{nox_installation_path}\\nox_adb.exe\" shell su -c \'setprop ctl.restart zygote\'')
-    print("After successful reboot, configure your settings as needed.")
+    
+    print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
+
 
 def install_frida_server():
     print("Checking Installed Frida-Tools Version")
@@ -420,6 +441,78 @@ def run_root_check_bypass():
     else:
         print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
 
+def android_biometric_bypass():
+    list_running_apps()  # List currently running apps
+    app_package = input("Enter the app package name to run the Android Biometric Bypass on: ").strip()
+
+    if app_package:
+        command = f"frida --codeshare ax/universal-android-biometric-bypass -n {app_package}"
+        print(Fore.GREEN + "Running Android Biometric Bypass...")
+        os.system(command)
+    else:
+        print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name.")
+
+def run_custom_frida_script():
+    frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
+    
+    # List existing known scripts
+    known_scripts = {
+        'ssl-pinning-bypass.js',
+        'root-check-bypass.js',
+        'android-biometric-bypass.js'
+    }
+    
+    # Find any new/unknown JS scripts in the frida-scripts directory
+    all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
+    unknown_scripts = all_scripts - known_scripts
+
+    # If there are any unknown scripts, list them and allow the user to choose one
+    if unknown_scripts:
+        print(Fore.CYAN + "\n🔍 Detected custom scripts in the 'frida-scripts' directory:" + Style.RESET_ALL)
+        unknown_scripts_list = list(unknown_scripts)
+        for idx, script in enumerate(unknown_scripts_list, 1):
+            print(f"{Fore.YELLOW}{idx}. {script}{Style.RESET_ALL}")
+
+        use_existing = input(Fore.CYAN + "✨ Do you want to execute one of these custom scripts? (y/n): " + Style.RESET_ALL).strip().lower()
+        if use_existing in ['y', 'yes']:
+            script_choice = input(f"🎯 Enter the number of the script you want to execute (1-{len(unknown_scripts_list)}): ").strip()
+            if script_choice.isdigit() and 1 <= int(script_choice) <= len(unknown_scripts_list):
+                script_path = os.path.join(frida_scripts_dir, unknown_scripts_list[int(script_choice) - 1])
+            else:
+                print(Fore.RED + "❌ Invalid choice. Exiting." + Style.RESET_ALL)
+                return
+        else:
+            # Prompt the user to enter the full path to their custom script
+            print(Fore.YELLOW + "⚠️ It is recommended to place your custom script in the 'frida-scripts' folder for easier access." + Style.RESET_ALL)
+            script_path = input(Fore.CYAN + "📝 Please provide the full path to your custom Frida script: " + Style.RESET_ALL).strip()
+    else:
+        # No unknown scripts found, ask the user to provide a path to a custom script
+        print(Fore.YELLOW + "⚠️ No custom scripts detected in the 'frida-scripts' directory." + Style.RESET_ALL)
+        print(Fore.YELLOW + "⚠️ It is recommended to place your custom script in the 'frida-scripts' folder for easier access." + Style.RESET_ALL)
+        script_path = input(Fore.CYAN + "📝 Please provide the full path to your custom Frida script: " + Style.RESET_ALL).strip()
+
+    # Ensure Frida server is running
+    if not is_frida_server_running():
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Error: Frida server is not running. Cannot proceed with the custom script." + Style.RESET_ALL)
+            return
+
+    # List running apps and select the target app
+    list_running_apps()
+    app_package = input(Fore.CYAN + "📱 Enter the app package name to run the custom script on: " + Style.RESET_ALL).strip()
+
+    # Run the custom script with Frida
+    if app_package:
+        try:
+            print(Fore.GREEN + "🚀 Running custom script..." + Style.RESET_ALL)
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            print(Fore.GREEN + "✅ Custom script executed successfully." + Style.RESET_ALL)
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Error: Failed to execute custom script. {e}" + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+
 def install_mob_fs():
     if shutil.which("docker"):
         print("Installing Mob-FS...")
@@ -449,19 +542,28 @@ def run_nuclei_against_apk():
     apktool_command = "apktool" if platform.system().lower() != "windows" else "apktool.bat"
     
     if os.path.exists(output_dir):
-        overwrite = input(f"The directory {output_dir} already exists. Do you want to overwrite it? (y/n): ").strip().lower()
-        if overwrite not in ['y', 'yes']:
-            print("Operation cancelled.")
-            return
-        else:
+        print(f"\n⚠️  The directory \"{output_dir}\" already exists.")
+        print("What would you like to do?")
+        print("1. 🕵️  Scan directly using the existing Apktool output")
+        print("2. 🔄  Overwrite the output with a fresh decompilation")
+
+        action_choice = input("\nEnter your choice (1 or 2): ").strip()
+
+        if action_choice == '1':
+            print("\n✅ Proceeding with the existing Apktool output...\n")
+        elif action_choice == '2':
             try:
                 subprocess.run([apktool_command, "d", apk_path, "-o", output_dir, "-f"], check=True)
+                print("\n🔄 Apktool output has been overwritten with a fresh decompilation.\n")
             except subprocess.CalledProcessError as e:
-                print(f"Error: Failed to decompile APK. {e}")
+                print(f"\n❌ Error: Failed to decompile APK. {e}\n")
                 return
             except FileNotFoundError as e:
-                print(f"Error: {e}. Ensure apktool is installed and in your PATH.")
+                print(f"\n❌ Error: {e}. Ensure apktool is installed and in your PATH.\n")
                 return
+        else:
+            print("\n❌ Invalid choice. Operation cancelled.\n")
+            return
     else:
         try:
             subprocess.run([apktool_command, "d", apk_path, "-o", output_dir], check=True)
@@ -472,10 +574,33 @@ def run_nuclei_against_apk():
             print(f"Error: {e}. Ensure apktool is installed and in your PATH.")
             return
     
-    # Get the path to the Nuclei templates directory
-    templates_path = input("Enter the path to the nuclei templates you want to use: ").strip()
-    if not os.path.exists(templates_path):
-        print(f"Error: The directory {templates_path} does not exist.")
+    # Determine the default template path based on the OS
+    if platform.system().lower() == "windows":
+        user_home = os.path.expanduser("~")
+        default_templates_path = os.path.join(user_home, "nuclei-templates")
+    else:  # Assuming Linux
+        user_home = os.path.expanduser("~")
+        default_templates_path = os.path.join(user_home, "nuclei-templates")
+
+    # Template selection menu
+    print("\nPlease choose the template option you want to use:")
+    print(f"1. Default Nuclei Templates (Path: {default_templates_path})")
+    print("2. Custom (Specify your own path)")
+    template_choice = input("Enter the number of your choice: ").strip()
+
+    # Process template choice
+    if template_choice == '1':
+        templates_path = default_templates_path
+        if not os.path.exists(templates_path):
+            print(f"Default templates directory not found at {templates_path}.")
+            return
+    elif template_choice == '2':
+        templates_path = input("Enter the path to your custom Nuclei templates: ").strip()
+        if not os.path.exists(templates_path):
+            print(f"Error: The directory {templates_path} does not exist.")
+            return
+    else:
+        print("Invalid choice. Exiting.")
         return
 
     # Ask the user for the severity level
@@ -505,61 +630,81 @@ def run_nuclei_against_apk():
 
     print("Analysis complete.")
 
+# Initialize colorama
+init(autoreset=True)
+
+def print_header(title):
+    print("\n" + "="*50)
+    print(f"{title:^50}")
+    print("="*50)
+
 def show_main_menu():
-    print("\nMain Menu")
-    print("1. Install Tools")
-    print("2. Run Tools")
-    print("3. NOX Player Options")
-    print("4. Frida")
-    print("5. Exit")
+    print(Fore.CYAN + r"""
+    __________       ________               .__    .___
+    \______   \ ____ \______ \_______  ____ |__| __| _/
+     |       _// __ \ |    |  \_  __ \/  _ \|  |/ __ | 
+     |    |   \  ___/ |    `   \  | \(  <_> )  / /_/ | 
+     |____|_  /\___  >_______  /__|   \____/|__\____ | 
+            \/     \/        \/                     \/ 
+    """)
+    print(Fore.GREEN + "Welcome to the Redroid Tool!")
+    print("="*50)
+    print("1. 🛠️  Install Tools")
+    print("2. 🚀  Run Tools")
+    print("3. 🎮  NOX Player Options")
+    print("4.  🕵️  Frida")
+    print("5. ❌  Exit")
 
 def show_install_tools_menu():
-    print("\nInstall Tools")
-    print("1. Frida")
-    print("2. Objection")
-    print("3. reFlutter")
-    print("4. Jadx")
-    print("5. apktool")
-    print("6. Nuclei")
-    print("7. Mob-FS (docker)")
-    print("8. apkleaks")
-    print("9. Back")
+    print_header("Install Tools")
+    print("1. 🧩  Frida")
+    print("2. 🔐  Objection")
+    print("3. 🛠️  reFlutter")
+    print("4. 🖥️  Jadx")
+    print("5. 🗃️  APKTool")
+    print("6. 🔎  Nuclei")
+    print("7. 📦  Mob-FS (docker)")
+    print("8. 🔍  apkleaks")
+    print("9. ↩️  Back")
 
 def show_run_tools_menu():
-    print("\nRun Tools")
-    print("1. Run Mob-FS (docker)")
-    print("2. Run nuclei against APK")
-    print("3. Back")
+    print_header("Run Tools")
+    print("1. 🛡️  Run Mob-FS (docker)")
+    print("2. 🔍  Run nuclei against APK")
+    print("3. ↩️  Back")
 
 def show_nox_player_options_menu():
-    print("\nNOX Player Options")
-    print("1. Remove Ads From Nox emulator")
-    print("2. Install Burp Certificate")
-    print("3. Install Frida Server")
-    print("4. Get ADB shell")
-    print("5. Print proxy status")
-    print("6. Set up/modify proxy")
-    print("7. Remove proxy")
-    print("8. Back")
+    print_header("NOX Player Options")
+    print("1. 🧹  Remove Ads From Nox emulator")
+    print("2. 🛡️  Install Burp Certificate")
+    print("3. 💻  Open ADB shell")
+    print("4. 🌐  Print proxy status")
+    print("5. ⚙️  Set up/modify proxy")
+    print("6. ❌  Remove proxy")
+    print("7. ↩️  Back")
 
 def show_frida_menu():
     print("\nFrida")
-    print("1. Run Frida Server")
-    print("2. List installed applications")
-    print("3. Run SSL Pinning Bypass")
-    print("4. Run Root Check Bypass")  # Added new option here
-    print("5. Back")
+    print("1. 🧩  Install Frida Server")
+    print("2. ▶️  Run Frida Server")
+    print("3. 📜  List installed applications")
+    print("4. 🔓  Run SSL Pinning Bypass")
+    print("5. 🛡️  Run Root Check Bypass")
+    print("6. 🔑  Android Biometric Bypass")
+    print("7. 📝  Run Custom Script")
+    print("8. ↩️  Back")
+
 
 def main():
     while True:
         show_main_menu()
-        main_choice = input("Enter your choice: ")
+        main_choice = input("Enter your choice: ").strip()
 
         if main_choice == '1':
             while True:
                 show_install_tools_menu()
-                tools_choice = input("Enter your choice: ")
-                
+                tools_choice = input("Enter your choice: ").strip()
+
                 if tools_choice == '1':
                     install_tool("frida-tools")
                 elif tools_choice == '2':
@@ -571,7 +716,7 @@ def main():
                 elif tools_choice == '5':
                     setup_apktool()
                 elif tools_choice == '6':
-                    download_latest_nuclei()
+                    install_nuclei()
                 elif tools_choice == '7':
                     install_mob_fs()
                 elif tools_choice == '8':
@@ -579,13 +724,13 @@ def main():
                 elif tools_choice == '9':
                     break
                 else:
-                    print("Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again.")
 
         elif main_choice == '2':
             while True:
                 show_run_tools_menu()
-                run_tools_choice = input("Enter your choice: ")
-                
+                run_tools_choice = input("Enter your choice: ").strip()
+
                 if run_tools_choice == '1':
                     run_mob_fs()
                 elif run_tools_choice == '2':
@@ -593,7 +738,7 @@ def main():
                 elif run_tools_choice == '3':
                     break
                 else:
-                    print("Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again.")
 
         elif main_choice == '3':
             if nox_installation_path:
@@ -602,67 +747,70 @@ def main():
                 if "connected" in connection_result.lower():
                     while True:
                         show_nox_player_options_menu()
-                        nox_choice = input("Enter your choice: ")
+                        nox_choice = input("Enter your choice: ").strip()
 
                         if nox_choice == '1':
                             remove_ads_and_bloatware()
                         elif nox_choice == '2':
-                            port = input("Enter the port Burp Suite is using to intercept requests: ")
+                            port = input("Enter the port Burp Suite is using to intercept requests: ").strip()
                             if port.isdigit():
                                 install_burpsuite_certificate(int(port))
                             else:
-                                print("Invalid port. Please enter a valid port number.")
+                                print(Fore.RED + "❗ Invalid port. Please enter a valid port number.")
                         elif nox_choice == '3':
-                            install_frida_server()
-                        elif nox_choice == '4':
                             open_adb_shell_from_nox()
-                        elif nox_choice == '5':
+                        elif nox_choice == '4':
                             get_nox_proxy_status()
-                        elif nox_choice == '6':
+                        elif nox_choice == '5':
                             ipv4_addresses = get_local_ipv4_addresses()
                             print("\nLocal IPv4 addresses:")
                             print("{:<30} {:<15}".format("Interface", "IP Address"))
                             print("-" * 45)
                             for iface, ip in ipv4_addresses.items():
-                                print("{:<30} {:<15}".format(iface, ip))
-                            print()
-                            ip = input("Enter the proxy IP address: ")
-                            port = input("Enter the proxy port: ")
+                                print(f"{iface:<30} {ip:<15}")
+                            ip = input("Enter the proxy IP address: ").strip()
+                            port = input("Enter the proxy port: ").strip()
                             set_nox_proxy(ip, port)
-                        elif nox_choice == '7':
+                        elif nox_choice == '6':
                             remove_nox_proxy()
-                        elif nox_choice == '8':
+                        elif nox_choice == '7':
                             break
                         else:
-                            print("Invalid choice, please try again.")
+                            print(Fore.RED + "❗ Invalid choice, please try again.")
                 else:
-                    print("Unable to connect to Nox emulator. Please check if it is running and try again.")
+                    print(Fore.RED + "❗ Unable to connect to Nox emulator. Please check if it is running and try again.")
             else:
-                print("Nox player not installed or not running.")
+                print(Fore.RED + "❗ Nox player not installed or not running.")
 
         elif main_choice == '4':
             while True:
                 show_frida_menu()
-                frida_choice = input("Enter your choice: ")
+                frida_choice = input("Enter your choice: ").strip()
 
                 if frida_choice == '1':
-                    run_frida_server()
+                    install_frida_server()
                 elif frida_choice == '2':
-                    list_installed_applications()
+                    run_frida_server()
                 elif frida_choice == '3':
-                    run_ssl_pinning_bypass()
+                    list_installed_applications()
                 elif frida_choice == '4':
-                    run_root_check_bypass()
+                    run_ssl_pinning_bypass()
                 elif frida_choice == '5':
+                    run_root_check_bypass()
+                elif frida_choice == '6':
+                    android_biometric_bypass()
+                elif frida_choice == '7':
+                    run_custom_frida_script()
+                elif frida_choice == '8':
                     break
                 else:
-                    print("Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again.")
 
         elif main_choice == '5':
-            print("Exiting...")
+            print(Fore.GREEN + "👋 Exiting... Have a great day!")
             break
         else:
-            print("Invalid choice, please try again.")
+            print(Fore.RED + "❗ Invalid choice, please try again.")
 
 if __name__ == "__main__":
     main()

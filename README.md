@@ -49,7 +49,6 @@ Once the script is running, you will see a main menu with various options. Here 
 3. **NOX Player Options**:
     - **Remove Ads From Nox emulator**: Remove ads and bloatware from the Nox emulator.
     - **Install Burp Certificate**: Install Burp Suite's CA certificate in the Nox emulator.
-    - **Install Frida Server**: Install Frida server on the Nox emulator.
     - **Get ADB shell**: Open an ADB shell in the Nox emulator.
     - **Print proxy status**: Print the current proxy settings of the Nox emulator.
     - **Set up/modify proxy**: Set or modify the proxy settings for the Nox emulator.
@@ -57,9 +56,13 @@ Once the script is running, you will see a main menu with various options. Here 
 
 4. **Frida**:
     - **Run Frida Server**: Start the Frida server in the background on the Nox emulator.
-    - **List installed applications**: List all installed applications on the device.
-    - **Run SSL Pinning Bypass**: Run an SSL pinning bypass script on a specified application.
-    - **Run Root Check Bypass**: Run a root check bypass script on a specified application.
+    - **List Installed Applications**: List all installed applications on the device.
+    - **Run SSL Pinning Bypass**: Execute an SSL pinning bypass script on a specific app.
+    - **Run Root Check Bypass**: Execute a root check bypass script on a specific app.
+    - **Android Biometric Bypass**: Run a biometric bypass script on a specific app.
+    - **Run Custom Script**: Execute a custom Frida script provided by the user.
+
+
 
 5. **Exit**: Exit the application.
 

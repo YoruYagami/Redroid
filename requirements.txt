@@ -1,6 +1,7 @@
 psutil
 requests
-pyOpenSSL
-beautifulsoup4
+pyopenssl
+bs4
 lxml
 shlex
+colorama

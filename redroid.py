@@ -13,30 +13,96 @@ from requests.exceptions import ConnectionError
 from bs4 import BeautifulSoup
 from colorama import init, Fore, Style
 import shlex
+import ctypes
+import sys
 
-def find_nox_installation_path():
-    for process in psutil.process_iter(['pid', 'name', 'exe']):
-        if 'Nox.exe' in process.info['name']:
-            return os.path.dirname(process.info['exe'])
-    return None
+def detect_emulator():
+    """Detect whether Nox or Genymotion emulator is running."""
+    emulator_type = None
+    emulator_installation_path = None
+    for process in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
+        name = process.info['name']
+        cmdline = process.info.get('cmdline', [])
+        if name and 'Nox.exe' in name:
+            emulator_type = 'Nox'
+            emulator_installation_path = os.path.dirname(process.info['exe'])
+            break
+        elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
+            emulator_type = 'Genymotion'
+            emulator_installation_path = os.path.dirname(process.info['exe'])
+            break
+    return emulator_type, emulator_installation_path
 
-nox_installation_path = find_nox_installation_path()
+emulator_type, emulator_installation_path = detect_emulator()
+if emulator_type is None:
+    print("No supported emulator (Nox or Genymotion) detected.")
+    sys.exit()
 
-def connect_to_nox_adb(ip='127.0.0.1', port=62001):
-    if nox_installation_path:
-        adb_command = f'\"{nox_installation_path}\\nox_adb.exe\" connect {ip}:{port}'
-        result = subprocess.run(adb_command, shell=True, text=True, capture_output=True)
-        return result.stdout.strip()
+def get_adb_command(emulator_type, emulator_installation_path):
+    if emulator_type == 'Nox':
+        adb_command = f'\"{emulator_installation_path}\\nox_adb.exe\"'
+    elif emulator_type == 'Genymotion':
+        # Genymotion's adb is located in 'tools' directory
+        adb_command = f'\"{emulator_installation_path}\\tools\\adb.exe\"'
+        if not os.path.exists(adb_command.strip('"')):
+            # Use system adb
+            adb_command = 'adb'
     else:
-        return "Nox player not installed."
+        adb_command = 'adb'
+    return adb_command
 
-def open_adb_shell_from_nox():
-    if nox_installation_path:
-        adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell -t su'
-        print("Opening ADB Shell. Type 'exit' to return to the main menu.")
-        subprocess.run(adb_shell_command, shell=True)
+adb_command = get_adb_command(emulator_type, emulator_installation_path)
+
+def get_connected_devices(adb_command):
+    result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True)
+    devices = []
+    for line in result.stdout.strip().split('\n')[1:]:
+        if line.strip():
+            device_serial = line.split()[0]
+            devices.append(device_serial)
+    return devices
+
+devices = get_connected_devices(adb_command)
+if not devices:
+    print("No devices connected via adb.")
+    sys.exit()
+elif len(devices) == 1:
+    device_serial = devices[0]
+else:
+    # Multiple devices connected, ask user to select one
+    print("Multiple devices connected:")
+    for idx, dev in enumerate(devices):
+        print(f"{idx+1}. {dev}")
+    choice = input("Select a device: ").strip()
+    if choice.isdigit() and 1 <= int(choice) <= len(devices):
+        device_serial = devices[int(choice)-1]
     else:
-        print("Nox player not installed.")
+        print("Invalid choice.")
+        sys.exit()
+
+def run_adb_command(command):
+    full_command = f'{adb_command} -s {device_serial} {command}'
+    result = subprocess.run(full_command, shell=True, text=True, capture_output=True)
+    return result
+
+def get_emulator_proxy_status():
+    result = run_adb_command('shell settings get global http_proxy')
+    if result.stdout.strip():
+        print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + f"{result.stdout.strip()}" + Style.RESET_ALL)
+    else:
+        print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
+
+def set_emulator_proxy(ip, port):
+    run_adb_command(f'shell settings put global http_proxy {ip}:{port}')
+    print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
+
+def remove_emulator_proxy():
+    run_adb_command('shell settings delete global http_proxy')
+    print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
+
+def open_adb_shell():
+    print("Opening ADB Shell. Type 'exit' to return to the main menu.")
+    subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
 
 def get_local_ipv4_addresses():
     ip_dict = {}
@@ -67,11 +133,11 @@ def try_download_certificate(ip, port):
                 pem_data = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
                 pem_file.write(pem_data)
 
-            os.system(f'\"{nox_installation_path}\\nox_adb.exe\" root')
-            os.system(f'\"{nox_installation_path}\\nox_adb.exe\" remount')
-            os.system(f'\"{nox_installation_path}\\nox_adb.exe\" push {output_pem_file} /system/etc/security/cacerts/')
-            os.system(f'\"{nox_installation_path}\\nox_adb.exe\" shell chmod 644 /system/etc/security/cacerts/{output_pem_file}')
-            print("BurpSuite Certificate Installed Successfully in Nox Player")
+            run_adb_command('root')
+            run_adb_command('remount')
+            run_adb_command(f'push {output_pem_file} /system/etc/security/cacerts/')
+            run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_pem_file}')
+            print("Burp Suite Certificate Installed Successfully in the emulator")
             return True
         else:
             print(f"Error: Unable to download the certificate from {cert_url}.")
@@ -205,8 +271,6 @@ def setup_apktool():
     except Exception as e:
         print(f"An error occurred while setting up apktool: {str(e)}")
 
-
-
 def is_admin():
     """Check if the script is running with administrative privileges."""
     try:
@@ -270,41 +334,11 @@ def check_go_installed():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-def get_nox_proxy_status():
-    if nox_installation_path:
-        adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings get global http_proxy'
-        result = subprocess.run(adb_shell_command, shell=True, text=True, capture_output=True)
-        if result.stdout.strip():
-            print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + f"{result.stdout.strip()}" + Style.RESET_ALL)
-        else:
-            print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
-
-def set_nox_proxy(ip, port):
-    if nox_installation_path:
-        adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings put global http_proxy {ip}:{port}'
-        subprocess.run(adb_shell_command, shell=True, text=True)
-        print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on Nox Emulator." + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
-
-def remove_nox_proxy():
-    if nox_installation_path:
-        adb_shell_command = f'\"{nox_installation_path}\\nox_adb.exe\" shell settings delete global http_proxy'
-        subprocess.run(adb_shell_command, shell=True, text=True)
-        print(Fore.GREEN + "✅ Proxy removed from Nox Emulator." + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Nox player not installed." + Style.RESET_ALL)
-
 def remove_ads_and_bloatware():
-    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from Nox Emulator..." + Style.RESET_ALL)
+    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
     
-    debloatroot = f'\"{nox_installation_path}\\nox_adb.exe\" root'
-    os.system(debloatroot)
-    
-    debloatremount = f'\"{nox_installation_path}\\nox_adb.exe\" remount'
-    os.system(debloatremount)
+    run_adb_command('root')
+    run_adb_command('remount')
     
     bloatware_apps = [
         'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
@@ -314,85 +348,72 @@ def remove_ads_and_bloatware():
     
     for app in bloatware_apps:
         print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
-        os.system(f'\"{nox_installation_path}\\nox_adb.exe\" shell rm -rf /system/app/{app}')
+        run_adb_command(f'shell rm -rf /system/app/{app}')
     
     print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
 
-    print(Fore.CYAN + "🔄 Rebooting the Nox Emulator..." + Style.RESET_ALL)
-    os.system(f'\"{nox_installation_path}\\nox_adb.exe\" shell su -c \'setprop ctl.restart zygote\'')
+    print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
+    run_adb_command('shell su -c \'setprop ctl.restart zygote\'')
     
     print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
 
-
 def install_frida_server():
     print("Checking Installed Frida-Tools Version")
-    frida_version_output = subprocess.check_output("frida --version 2>&1", shell=True, stderr=subprocess.STDOUT, text=True)
+    try:
+        frida_version_output = subprocess.check_output("frida --version 2>&1", shell=True, stderr=subprocess.STDOUT, text=True)
+    except subprocess.CalledProcessError:
+        print("Frida Tools is not installed on this system.")
+        return
     if re.search(r'(\d+\.\d+\.\d+)', frida_version_output):
         frida_version = re.search(r'(\d+\.\d+\.\d+)', frida_version_output).group(1)
         print(f"Frida-Tools Version: {frida_version}")
-        
-        noxarch = f'\"{nox_installation_path}\\nox_adb.exe\"  shell getprop ro.product.cpu.abi'
-        noxarchre = subprocess.run(noxarch, shell=True, text=True, check=True, capture_output=True)
-        noxarchresult = noxarchre.stdout.strip()
-        print(f"CPU Architecture of Nox Emulator: {noxarchresult}")
-        
+
+        arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
+        emulator_arch = arch_result.stdout.strip()
+        print(f"CPU Architecture of Emulator: {emulator_arch}")
+
         print("Downloading Frida-Server With Same Version")
-        frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{noxarchresult}.xz"
-        
+        frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
+
         response = requests.get(frida_server_url)
         with open("frida-server.xz", "wb") as f:
             f.write(response.content)
-        
+
         with lzma.open("frida-server.xz") as f:
             with open("frida-server", "wb") as out_f:
                 out_f.write(f.read())
-        
+
         os.remove("frida-server.xz")
-        
-        os.system(f'\"{nox_installation_path}\\nox_adb.exe\" push frida-server /data/local/tmp/')
+
+        run_adb_command('push frida-server /data/local/tmp/')
         os.remove("frida-server")
-        
-        chmodfridaserver = f'\"{nox_installation_path}\\nox_adb.exe\"  shell chmod +x /data/local/tmp/frida-server'
-        os.system(chmodfridaserver)
+
+        run_adb_command('shell chmod +x /data/local/tmp/frida-server')
         print("Provided executable permissions to Frida Server.")
-        print("Frida Server setup completely on Nox Emulator.")
+        print("Frida Server setup completely on the emulator.")
         print()
     else:
         print("Frida Tools is not installed on this system.")
 
 def is_frida_server_running():
     try:
-        check_command = [os.path.join(nox_installation_path, "nox_adb.exe"), "shell", "pgrep", "-f", "frida-server"]
-        result = subprocess.run(check_command, capture_output=True, text=True)
-        return result.returncode == 0  # Returncode 0 means the process is running
+        result = run_adb_command('shell pgrep -f frida-server')
+        return result.returncode == 0 and result.stdout.strip()  # Returncode 0 means the process is running
     except Exception as e:
         print(f"Error checking if Frida server is running: {str(e)}")
         return False
 
 def run_frida_server():
-    if nox_installation_path:
-        if is_frida_server_running():
-            print("Frida server is already running.")
-            return
+    if is_frida_server_running():
+        print("Frida server is already running.")
+        return
 
-        print("Starting Frida Server in the background...")
-
-        command = [os.path.join(nox_installation_path, "nox_adb.exe"), "shell", "/data/local/tmp/frida-server"]
-        
-        try:
-            if platform.system().lower() == 'windows':
-                subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            else:  # Linux and macOS
-                subprocess.Popen(command)
-            
-            print("Frida Server should be running in the background.")
-        except Exception as e:
-            print(f"Failed to start Frida server: {str(e)}")
-    else:
-        print("Nox player not installed or Frida server not started on the Nox Player.")
+    print("Starting Frida Server in the background...")
+    run_adb_command('shell /data/local/tmp/frida-server &')
+    print("Frida Server should be running in the background.")
 
 def list_installed_applications():
-    print("Listing installed applications on Nox Emulator...")
+    print("Listing installed applications on the emulator...")
     os.system("frida-ps -Uai")
 
 def list_running_apps():
@@ -408,11 +429,10 @@ def run_ssl_pinning_bypass():
     if os.path.exists(script_path):
         list_running_apps()
         app_package = input("Enter the app package name to run the SSL pinning bypass on: ").strip()
-        
-        # Check if Frida Gadget is embedded and the app is running
+
+        # Start the app and attach Frida
         try:
-            # Start the app and attach Frida
-            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
             print("SSL pinning bypass script executed successfully.")
         except subprocess.CalledProcessError as e:
             print(f"Error: Failed to execute SSL pinning bypass script. {e}")
@@ -425,16 +445,15 @@ def run_root_check_bypass():
         if not is_frida_server_running():
             print("Error: Frida server is not running. Cannot proceed with root check bypass.")
             return
-    
+
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
     if os.path.exists(script_path):
         list_running_apps()
         app_package = input("Enter the app package name to run the root check bypass on: ").strip()
-        
-        # Check if Frida Gadget is embedded and the app is running
+
+        # Start the app and attach Frida
         try:
-            # Start the app and attach Frida
-            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
             print("Root check bypass script executed successfully.")
         except subprocess.CalledProcessError as e:
             print(f"Error: Failed to execute root check bypass script. {e}")
@@ -446,7 +465,7 @@ def android_biometric_bypass():
     app_package = input("Enter the app package name to run the Android Biometric Bypass on: ").strip()
 
     if app_package:
-        command = f"frida --codeshare ax/universal-android-biometric-bypass -n {app_package}"
+        command = f"frida --codeshare ax/apk-mitm -n {app_package}"
         print(Fore.GREEN + "Running Android Biometric Bypass...")
         os.system(command)
     else:
@@ -506,7 +525,7 @@ def run_custom_frida_script():
     if app_package:
         try:
             print(Fore.GREEN + "🚀 Running custom script..." + Style.RESET_ALL)
-            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path])
+            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
             print(Fore.GREEN + "✅ Custom script executed successfully." + Style.RESET_ALL)
         except subprocess.CalledProcessError as e:
             print(Fore.RED + f"❌ Error: Failed to execute custom script. {e}" + Style.RESET_ALL)
@@ -515,15 +534,15 @@ def run_custom_frida_script():
 
 def install_mob_fs():
     if shutil.which("docker"):
-        print("Installing Mob-FS...")
+        print("Installing MobSF...")
         os.system("docker pull opensecurity/mobile-security-framework-mobsf:latest")
-        print("Mob-FS installed successfully.")
+        print("MobSF installed successfully.")
     else:
         print("Docker is not installed. Please install Docker first.")
 
 def run_mob_fs():
     if shutil.which("docker"):
-        print("Running Mob-FS...")
+        print("Running MobSF...")
         os.system("docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest")
     else:
         print("Docker is not installed. Please install Docker first.")
@@ -651,8 +670,8 @@ def show_main_menu():
     print("="*50)
     print("1. 🛠️  Install Tools")
     print("2. 🚀  Run Tools")
-    print("3. 🎮  NOX Player Options")
-    print("4.  🕵️  Frida")
+    print("3. 🎮  Emulator Options")
+    print("4. 🕵️  Frida")
     print("5. ❌  Exit")
 
 def show_install_tools_menu():
@@ -663,19 +682,19 @@ def show_install_tools_menu():
     print("4. 🖥️  Jadx")
     print("5. 🗃️  APKTool")
     print("6. 🔎  Nuclei")
-    print("7. 📦  Mob-FS (docker)")
+    print("7. 📦  MobSF (docker)")
     print("8. 🔍  apkleaks")
     print("9. ↩️  Back")
 
 def show_run_tools_menu():
     print_header("Run Tools")
-    print("1. 🛡️  Run Mob-FS (docker)")
+    print("1. 🛡️  Run MobSF (docker)")
     print("2. 🔍  Run nuclei against APK")
     print("3. ↩️  Back")
 
-def show_nox_player_options_menu():
-    print_header("NOX Player Options")
-    print("1. 🧹  Remove Ads From Nox emulator")
+def show_emulator_options_menu():
+    print_header("Emulator Options")
+    print("1. 🧹  Remove Ads and Bloatware from Nox")
     print("2. 🛡️  Install Burp Certificate")
     print("3. 💻  Open ADB shell")
     print("4. 🌐  Print proxy status")
@@ -693,7 +712,6 @@ def show_frida_menu():
     print("6. 🔑  Android Biometric Bypass")
     print("7. 📝  Run Custom Script")
     print("8. ↩️  Back")
-
 
 def main():
     while True:
@@ -741,46 +759,38 @@ def main():
                     print(Fore.RED + "❗ Invalid choice, please try again.")
 
         elif main_choice == '3':
-            if nox_installation_path:
-                connection_result = connect_to_nox_adb()
-                print(connection_result)
-                if "connected" in connection_result.lower():
-                    while True:
-                        show_nox_player_options_menu()
-                        nox_choice = input("Enter your choice: ").strip()
+            while True:
+                show_emulator_options_menu()
+                emulator_choice = input("Enter your choice: ").strip()
 
-                        if nox_choice == '1':
-                            remove_ads_and_bloatware()
-                        elif nox_choice == '2':
-                            port = input("Enter the port Burp Suite is using to intercept requests: ").strip()
-                            if port.isdigit():
-                                install_burpsuite_certificate(int(port))
-                            else:
-                                print(Fore.RED + "❗ Invalid port. Please enter a valid port number.")
-                        elif nox_choice == '3':
-                            open_adb_shell_from_nox()
-                        elif nox_choice == '4':
-                            get_nox_proxy_status()
-                        elif nox_choice == '5':
-                            ipv4_addresses = get_local_ipv4_addresses()
-                            print("\nLocal IPv4 addresses:")
-                            print("{:<30} {:<15}".format("Interface", "IP Address"))
-                            print("-" * 45)
-                            for iface, ip in ipv4_addresses.items():
-                                print(f"{iface:<30} {ip:<15}")
-                            ip = input("Enter the proxy IP address: ").strip()
-                            port = input("Enter the proxy port: ").strip()
-                            set_nox_proxy(ip, port)
-                        elif nox_choice == '6':
-                            remove_nox_proxy()
-                        elif nox_choice == '7':
-                            break
-                        else:
-                            print(Fore.RED + "❗ Invalid choice, please try again.")
+                if emulator_choice == '1':
+                    remove_ads_and_bloatware()
+                elif emulator_choice == '2':
+                    port = input("Enter the port Burp Suite is using to intercept requests: ").strip()
+                    if port.isdigit():
+                        install_burpsuite_certificate(int(port))
+                    else:
+                        print(Fore.RED + "❗ Invalid port. Please enter a valid port number.")
+                elif emulator_choice == '3':
+                    open_adb_shell()
+                elif emulator_choice == '4':
+                    get_emulator_proxy_status()
+                elif emulator_choice == '5':
+                    ipv4_addresses = get_local_ipv4_addresses()
+                    print("\nLocal IPv4 addresses:")
+                    print("{:<30} {:<15}".format("Interface", "IP Address"))
+                    print("-" * 45)
+                    for iface, ip in ipv4_addresses.items():
+                        print(f"{iface:<30} {ip:<15}")
+                    ip = input("Enter the proxy IP address: ").strip()
+                    port = input("Enter the proxy port: ").strip()
+                    set_emulator_proxy(ip, port)
+                elif emulator_choice == '6':
+                    remove_emulator_proxy()
+                elif emulator_choice == '7':
+                    break
                 else:
-                    print(Fore.RED + "❗ Unable to connect to Nox emulator. Please check if it is running and try again.")
-            else:
-                print(Fore.RED + "❗ Nox player not installed or not running.")
+                    print(Fore.RED + "❗ Invalid choice, please try again.")
 
         elif main_choice == '4':
             while True:

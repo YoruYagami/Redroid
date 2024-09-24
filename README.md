@@ -32,37 +32,35 @@ Once the script is running, you will see a main menu with various options. Here 
 
 ### Main Menu
 
-1. **Install Tools**:
-    - **Frida**: Install Frida tools.
-    - **Objection**: Install objection.
-    - **reFlutter**: Install reFlutter.
-    - **Jadx**: Download the latest Jadx GUI.
-    - **Apktool**: Download and set up Apktool.
-    - **Nuclei**: Download and install Nuclei.
-    - **Mob-FS (docker)**: Install Mob-FS using Docker.
-    - **apkleaks**: Install apkleaks.
+1. 🛠️**Install Tools**:
+    - 🧩**Frida**: Install Frida tools.
+    - 🔐**Objection**: Install objection.
+    - 🛠️**reFlutter**: Install reFlutter.
+    - 🖥️**Jadx**: Download the latest Jadx GUI.
+    - 🗃️**Apktool**: Download and set up Apktool.
+    - 🔎**Nuclei**: Download and install Nuclei.
+    - 📦**Mob-FS (docker)**: Install Mob-FS using Docker.
+    - 🔍**apkleaks**: Install apkleaks.
 
-2. **Run Tools**:
-    - **Run Mob-FS (docker)**: Run Mob-FS in a Docker container.
-    - **Run nuclei against APK**: Decompile and run Nuclei vulnerability scan on an APK with custom templates.
+2. 🚀**Run Tools**:
+    - 🛡️**Run Mob-FS (docker)**: Run Mob-FS in a Docker container.
+    - 🔍**Run nuclei against APK**: Decompile and run Nuclei vulnerability scan on an APK with custom templates.
 
-3. **NOX Player Options**:
-    - **Remove Ads From Nox emulator**: Remove ads and bloatware from the Nox emulator.
-    - **Install Burp Certificate**: Install Burp Suite's CA certificate in the Nox emulator.
-    - **Get ADB shell**: Open an ADB shell in the Nox emulator.
-    - **Print proxy status**: Print the current proxy settings of the Nox emulator.
-    - **Set up/modify proxy**: Set or modify the proxy settings for the Nox emulator.
-    - **Remove proxy**: Remove the proxy settings from the Nox emulator.
+ 3. 🎮**Emulator Player Options**:
+    - 🧹**Remove Ads From Emulator**: Remove ads and bloatware from the Nox Emulator.
+    - 🛡️**Install Burp Certificate**: Install Burp Suite's CA certificate in the Emulator.
+    - 💻**Open ADB shell**: Open an ADB shell in the Emulator.
+    - 🌐**Print proxy status**: Print the current proxy settings of the Emulator.
+    - ⚙️**Set up/modify proxy**: Set or modify the proxy settings for the emulator.
+    - ❌**Remove proxy**: Remove the proxy settings from the Emulator.
 
-4. **Frida**:
-    - **Run Frida Server**: Start the Frida server in the background on the Nox emulator.
-    - **List Installed Applications**: List all installed applications on the device.
-    - **Run SSL Pinning Bypass**: Execute an SSL pinning bypass script on a specific app.
-    - **Run Root Check Bypass**: Execute a root check bypass script on a specific app.
-    - **Android Biometric Bypass**: Run a biometric bypass script on a specific app.
-    - **Run Custom Script**: Execute a custom Frida script provided by the user.
-
-
+4. 🕵️**Frida**:
+    - ▶️ **Run Frida Server**: Start the Frida server in the background on the Emulator.
+    - 📜**List Installed Applications**: List all installed applications on the device.
+    - 🔓**Run SSL Pinning Bypass**: Execute an SSL pinning bypass script on a specific app.
+    - 🛡️**Run Root Check Bypass**: Execute a root check bypass script on a specific app.
+    - 🔑**Android Biometric Bypass**: Run a biometric bypass script on a specific app.
+    - 📝**Run Custom Script**: Execute a custom Frida script provided by the user.
 
 5. **Exit**: Exit the application.
 

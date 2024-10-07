@@ -33,11 +33,7 @@ def detect_emulator():
             break
     return emulator_type, emulator_installation_path
 
-emulator_type, emulator_installation_path = detect_emulator()
-if emulator_type is None:
-    print("No supported emulator (Nox or Genymotion) detected.")
-    sys.exit()
-
+# Define adb before utilize it 
 def get_adb_command(emulator_type, emulator_installation_path):
     if emulator_type == 'Nox':
         adb_command = f'\"{emulator_installation_path}\\nox_adb.exe\"'
@@ -51,7 +47,23 @@ def get_adb_command(emulator_type, emulator_installation_path):
         adb_command = 'adb'
     return adb_command
 
+# colorama init
+init(autoreset=True)
+
+# Detect emulator
+emulator_type, emulator_installation_path = detect_emulator()
+if emulator_type:
+    print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
+else:
+    print(Fore.RED + "❌ Emulator not detected." + Style.RESET_ALL)
+
 adb_command = get_adb_command(emulator_type, emulator_installation_path)
+
+def run_emulator_specific_function():
+    if not emulator_type:
+        print(Fore.RED + "❗ This function requires an emulator. Please start an emulator and try again." + Style.RESET_ALL)
+        return False
+    return True
 
 def get_connected_devices(adb_command):
     result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True)
@@ -64,8 +76,8 @@ def get_connected_devices(adb_command):
 
 devices = get_connected_devices(adb_command)
 if not devices:
-    print("No devices connected via adb.")
-    sys.exit()
+    print(Fore.YELLOW + "⚠️ No devices connected via adb." + Style.RESET_ALL)
+    device_serial = None
 elif len(devices) == 1:
     device_serial = devices[0]
 else:
@@ -78,29 +90,44 @@ else:
         device_serial = devices[int(choice)-1]
     else:
         print("Invalid choice.")
-        sys.exit()
+        device_serial = None
 
 def run_adb_command(command):
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. This command requires a connected device or emulator." + Style.RESET_ALL)
+        return None
     full_command = f'{adb_command} -s {device_serial} {command}'
     result = subprocess.run(full_command, shell=True, text=True, capture_output=True)
     return result
 
 def get_emulator_proxy_status():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot retrieve proxy status." + Style.RESET_ALL)
+        return
     result = run_adb_command('shell settings get global http_proxy')
-    if result.stdout.strip():
+    if result and result.stdout.strip():
         print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + f"{result.stdout.strip()}" + Style.RESET_ALL)
     else:
         print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
 
 def set_emulator_proxy(ip, port):
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot set proxy." + Style.RESET_ALL)
+        return
     run_adb_command(f'shell settings put global http_proxy {ip}:{port}')
     print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
 
 def remove_emulator_proxy():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot remove proxy." + Style.RESET_ALL)
+        return
     run_adb_command('shell settings delete global http_proxy')
     print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
 
 def open_adb_shell():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot open ADB shell." + Style.RESET_ALL)
+        return
     print("Opening ADB Shell. Type 'exit' to return to the main menu.")
     subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
 

@@ -47,7 +47,7 @@ def get_adb_command(emulator_type, emulator_installation_path):
         adb_command = 'adb'
     return adb_command
 
-# colorama init
+# Initialize colorama
 init(autoreset=True)
 
 # Detect emulator
@@ -209,7 +209,7 @@ def download_latest_jadx():
             print("Jadx installed successfully via apt.")
         elif os.path.exists("/etc/arch-release"):  # Arch
             print("Detected Arch Linux")
-            os.system("sudo pacman -Sy jadx --noconfirm")
+            os.system("sudo pacman -Syu jadx --noconfirm")
             print("Jadx installed successfully via pacman.")
         else:
             print("Unsupported Linux distribution. Please install Jadx manually.")
@@ -402,23 +402,27 @@ def install_frida_server():
         print("Downloading Frida-Server With Same Version")
         frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
 
-        response = requests.get(frida_server_url)
-        with open("frida-server.xz", "wb") as f:
-            f.write(response.content)
+        try:
+            response = requests.get(frida_server_url)
+            response.raise_for_status()
+            with open("frida-server.xz", "wb") as f:
+                f.write(response.content)
 
-        with lzma.open("frida-server.xz") as f:
-            with open("frida-server", "wb") as out_f:
-                out_f.write(f.read())
+            with lzma.open("frida-server.xz") as f:
+                with open("frida-server", "wb") as out_f:
+                    out_f.write(f.read())
 
-        os.remove("frida-server.xz")
+            os.remove("frida-server.xz")
 
-        run_adb_command('push frida-server /data/local/tmp/')
-        os.remove("frida-server")
+            run_adb_command('push frida-server /data/local/tmp/')
+            os.remove("frida-server")
 
-        run_adb_command('shell chmod +x /data/local/tmp/frida-server')
-        print("Provided executable permissions to Frida Server.")
-        print("Frida Server setup completely on the emulator.")
-        print()
+            run_adb_command('shell chmod +x /data/local/tmp/frida-server')
+            print("Provided executable permissions to Frida Server.")
+            print("Frida Server setup completely on the emulator.")
+            print()
+        except Exception as e:
+            print(f"An error occurred while setting up Frida Server: {str(e)}")
     else:
         print("Frida Tools is not installed on this system.")
 
@@ -493,10 +497,10 @@ def android_biometric_bypass():
 
     if app_package:
         command = f"frida --codeshare ax/apk-mitm -n {app_package}"
-        print(Fore.GREEN + "Running Android Biometric Bypass...")
+        print(Fore.GREEN + "Running Android Biometric Bypass..." + Style.RESET_ALL)
         os.system(command)
     else:
-        print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name.")
+        print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
 
 def run_custom_frida_script():
     frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
@@ -509,6 +513,10 @@ def run_custom_frida_script():
     }
     
     # Find any new/unknown JS scripts in the frida-scripts directory
+    if not os.path.exists(frida_scripts_dir):
+        print(Fore.RED + f"❌ 'frida-scripts' directory does not exist at {frida_scripts_dir}." + Style.RESET_ALL)
+        return
+    
     all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
     unknown_scripts = all_scripts - known_scripts
 
@@ -583,7 +591,7 @@ def run_nuclei_against_apk():
     
     # Set the output directory to the current directory
     script_dir = os.getcwd()
-    output_dir = os.path.join(script_dir, apk_path.rsplit('.', 1)[0])  # Remove the .apk extension
+    output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])  # Remove the .apk extension
     
     apktool_command = "apktool" if platform.system().lower() != "windows" else "apktool.bat"
     
@@ -624,7 +632,7 @@ def run_nuclei_against_apk():
     if platform.system().lower() == "windows":
         user_home = os.path.expanduser("~")
         default_templates_path = os.path.join(user_home, "nuclei-templates")
-    else:  # Assuming Linux
+    else:  # Assuming Linux or macOS
         user_home = os.path.expanduser("~")
         default_templates_path = os.path.join(user_home, "nuclei-templates")
 
@@ -668,7 +676,7 @@ def run_nuclei_against_apk():
     # Ask the user if they want to save the output
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
     if save_output in ['y', 'yes']:
-        output_file = os.path.join(script_dir, f"{os.path.basename(output_dir)}_nuclei_output.txt")
+        output_file = os.path.join(script_dir, f"{os.path.splitext(os.path.basename(output_dir))[0]}_nuclei_output.txt")
         with open(output_file, "w") as file:
             file.write(result.stdout)
         
@@ -676,7 +684,46 @@ def run_nuclei_against_apk():
 
     print("Analysis complete.")
 
-# Initialize colorama
+def run_apkleaks():
+    """Run apkleaks on a specified APK file and automatically save the output."""
+    if not is_apkleaks_installed():
+        print(Fore.RED + "❌ apkleaks is not installed or not found in your PATH. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
+        return
+
+    apk_path = input("📝 Enter the path to the APK file: ").strip()
+    
+    if not os.path.isfile(apk_path):
+        print(Fore.RED + f"❌ Error: The file '{apk_path}' does not exist or is not a valid file." + Style.RESET_ALL)
+        return
+    
+    print(Fore.CYAN + f"\n🔍 Running apkleaks on '{apk_path}'..." + Style.RESET_ALL)
+    
+    try:
+        # Define the output filename
+        output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_apkleaks_output.txt"
+        output_path = os.path.join(os.getcwd(), output_filename)
+        
+        # Run apkleaks with the -o flag to specify the output file
+        command = ['apkleaks', '-f', apk_path, '-o', output_path]
+        subprocess.run(command, check=True)
+        
+        print(Fore.GREEN + f"✅ apkleaks has analyzed the APK and saved the output to '{output_path}'." + Style.RESET_ALL)
+    
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error running apkleaks: {e}" + Style.RESET_ALL)
+    except FileNotFoundError:
+        print(Fore.RED + "❌ apkleaks is not installed or not found in your PATH. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
+
+def is_apkleaks_installed():
+    try:
+        subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+# Initialize colorama again to ensure it's active
 init(autoreset=True)
 
 def print_header(title):
@@ -717,7 +764,8 @@ def show_run_tools_menu():
     print_header("Run Tools")
     print("1. 🛡️  Run MobSF (docker)")
     print("2. 🔍  Run nuclei against APK")
-    print("3. ↩️  Back")
+    print("3. 🕵️  Run apkleaks against APK")
+    print("4. ↩️  Back")
 
 def show_emulator_options_menu():
     print_header("Emulator Options")
@@ -730,7 +778,7 @@ def show_emulator_options_menu():
     print("7. ↩️  Back")
 
 def show_frida_menu():
-    print("\nFrida")
+    print_header("Frida")
     print("1. 🧩  Install Frida Server")
     print("2. ▶️  Run Frida Server")
     print("3. 📜  List installed applications")
@@ -739,6 +787,8 @@ def show_frida_menu():
     print("6. 🔑  Android Biometric Bypass")
     print("7. 📝  Run Custom Script")
     print("8. ↩️  Back")
+
+
 
 def main():
     while True:
@@ -769,21 +819,23 @@ def main():
                 elif tools_choice == '9':
                     break
                 else:
-                    print(Fore.RED + "❗ Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
         elif main_choice == '2':
             while True:
                 show_run_tools_menu()
-                run_tools_choice = input("Enter your choice: ").strip()
+                run_tools_choice = input("📌 Enter your choice: ").strip()
 
                 if run_tools_choice == '1':
                     run_mob_fs()
                 elif run_tools_choice == '2':
                     run_nuclei_against_apk()
                 elif run_tools_choice == '3':
+                    run_apkleaks()
+                elif run_tools_choice == '4':
                     break
                 else:
-                    print(Fore.RED + "❗ Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
         elif main_choice == '3':
             while True:
@@ -797,7 +849,7 @@ def main():
                     if port.isdigit():
                         install_burpsuite_certificate(int(port))
                     else:
-                        print(Fore.RED + "❗ Invalid port. Please enter a valid port number.")
+                        print(Fore.RED + "❗ Invalid port. Please enter a valid port number." + Style.RESET_ALL)
                 elif emulator_choice == '3':
                     open_adb_shell()
                 elif emulator_choice == '4':
@@ -817,7 +869,7 @@ def main():
                 elif emulator_choice == '7':
                     break
                 else:
-                    print(Fore.RED + "❗ Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
         elif main_choice == '4':
             while True:
@@ -841,13 +893,13 @@ def main():
                 elif frida_choice == '8':
                     break
                 else:
-                    print(Fore.RED + "❗ Invalid choice, please try again.")
+                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
         elif main_choice == '5':
             print(Fore.GREEN + "👋 Exiting... Have a great day!")
             break
         else:
-            print(Fore.RED + "❗ Invalid choice, please try again.")
+            print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
 if __name__ == "__main__":
     main()

@@ -45,6 +45,7 @@ Once the script is running, you will see a main menu with various options. Here 
 2. 🚀**Run Tools**:
     - 🛡️**Run Mob-FS (docker)**: Run Mob-FS in a Docker container.
     - 🔍**Run nuclei against APK**: Decompile and run Nuclei vulnerability scan on an APK with custom templates.
+    - 🔍**Run apkleaks against APK**: Decompile and run apkleaks scan on an APK.
 
  3. 🎮**Emulator Player Options**:
     - 🧹**Remove Ads From Emulator**: Remove ads and bloatware from the Nox Emulator.

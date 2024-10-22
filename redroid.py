@@ -631,37 +631,49 @@ def run_nuclei_against_apk():
     # Determine the default template path based on the OS
     if platform.system().lower() == "windows":
         user_home = os.path.expanduser("~")
-        default_templates_path = os.path.join(user_home, "nuclei-templates")
+        android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
+        keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
     else:  # Assuming Linux or macOS
         user_home = os.path.expanduser("~")
-        default_templates_path = os.path.join(user_home, "nuclei-templates")
+        android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
+        keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
 
     # Template selection menu
-    print("\nPlease choose the template option you want to use:")
-    print(f"1. Default Nuclei Templates (Path: {default_templates_path})")
-    print("2. Custom (Specify your own path)")
+    print("\nPlease choose which templates to use:")
+    print("1. Android Templates")
+    print("2. Keys Templates")
+    print("3. Both (Android + Keys)")
     template_choice = input("Enter the number of your choice: ").strip()
 
     # Process template choice
+    templates_paths = []
     if template_choice == '1':
-        templates_path = default_templates_path
-        if not os.path.exists(templates_path):
-            print(f"Default templates directory not found at {templates_path}.")
-            return
+        templates_paths = [android_template_path]
     elif template_choice == '2':
-        templates_path = input("Enter the path to your custom Nuclei templates: ").strip()
-        if not os.path.exists(templates_path):
-            print(f"Error: The directory {templates_path} does not exist.")
-            return
+        templates_paths = [keys_template_path]
+    elif template_choice == '3':
+        templates_paths = [android_template_path, keys_template_path]
     else:
         print("Invalid choice. Exiting.")
         return
 
+    # Check if the selected template paths exist
+    for path in templates_paths:
+        if not os.path.exists(path):
+            print(f"Templates directory not found at {path}.")
+            return
+
     # Ask the user for the severity level
     severity_level = input("Enter the severity level (low, medium, high, critical) you want to use (leave blank for none): ").strip().lower()
     
-    nuclei_command = ["nuclei", "-target", output_dir, "-t", templates_path]
+    # Prepare nuclei command
+    nuclei_command = ["nuclei", "-target", output_dir]
     
+    # Add template paths to the nuclei command
+    for template_path in templates_paths:
+        nuclei_command.extend(["-t", template_path])
+    
+    # Add severity level if specified
     if severity_level:
         nuclei_command.extend(["-severity", severity_level])
 

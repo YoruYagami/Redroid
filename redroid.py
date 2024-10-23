@@ -33,7 +33,7 @@ def detect_emulator():
             break
     return emulator_type, emulator_installation_path
 
-# Define adb before utilize it 
+# Define adb before utilizing it
 def get_adb_command(emulator_type, emulator_installation_path):
     if emulator_type == 'Nox':
         adb_command = f'\"{emulator_installation_path}\\nox_adb.exe\"'
@@ -234,8 +234,8 @@ def download_latest_jadx():
                         with open(local_filepath, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
-                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
-                    return
+                        print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
+                        return
             print("No suitable Jadx executable found in the latest release.")
         except Exception as e:
             print(f"An error occurred while trying to download the latest version of Jadx: {str(e)}")
@@ -381,7 +381,7 @@ def remove_ads_and_bloatware():
 
     print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
     run_adb_command('shell su -c \'setprop ctl.restart zygote\'')
-    
+
     print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
 
 def install_frida_server():
@@ -434,14 +434,23 @@ def is_frida_server_running():
         print(f"Error checking if Frida server is running: {str(e)}")
         return False
 
+def is_frida_server_running():
+    try:
+        result = run_adb_command('shell pgrep -f frida-server')
+        return result.returncode == 0 and result.stdout.strip()  # Returncode 0 means the process is running
+    except Exception as e:
+        print(f"Error checking if Frida server is running: {str(e)}")
+        return False
+
 def run_frida_server():
     if is_frida_server_running():
         print("Frida server is already running.")
         return
 
-    print("Starting Frida Server in the background...")
-    run_adb_command('shell /data/local/tmp/frida-server &')
-    print("Frida Server should be running in the background.")
+    print("Starting Frida Server in a new terminal...")
+    cmd = f'{adb_command} -s {device_serial} shell /data/local/tmp/frida-server'
+    open_new_terminal(cmd)
+    print("Frida Server should be running in the new terminal.")
 
 def list_installed_applications():
     print("Listing installed applications on the emulator...")
@@ -462,11 +471,9 @@ def run_ssl_pinning_bypass():
         app_package = input("Enter the app package name to run the SSL pinning bypass on: ").strip()
 
         # Start the app and attach Frida
-        try:
-            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
-            print("SSL pinning bypass script executed successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"Error: Failed to execute SSL pinning bypass script. {e}")
+        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        open_new_terminal(cmd)
+        print("SSL pinning bypass script is running in a new terminal.")
     else:
         print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
 
@@ -483,24 +490,26 @@ def run_root_check_bypass():
         app_package = input("Enter the app package name to run the root check bypass on: ").strip()
 
         # Start the app and attach Frida
-        try:
-            subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
-            print("Root check bypass script executed successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"Error: Failed to execute root check bypass script. {e}")
+        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        open_new_terminal(cmd)
+        print("Root check bypass script is running in a new terminal.")
     else:
         print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
 
 def android_biometric_bypass():
-    list_running_apps()  # List currently running apps
-    app_package = input("Enter the app package name to run the Android Biometric Bypass on: ").strip()
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'android-biometric-bypass.js')
+    if os.path.exists(script_path):
+        list_running_apps()
+        app_package = input("Enter the app package name to run the Android Biometric Bypass on: ").strip()
 
-    if app_package:
-        command = f"frida --codeshare ax/apk-mitm -n {app_package}"
-        print(Fore.GREEN + "Running Android Biometric Bypass..." + Style.RESET_ALL)
-        os.system(command)
+        if app_package:
+            cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+            print(Fore.GREEN + "Running Android Biometric Bypass in a new terminal..." + Style.RESET_ALL)
+            open_new_terminal(cmd)
+        else:
+            print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
     else:
-        print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+        print(f"Error: Script not found at {script_path}. Please ensure the script is in the 'frida-scripts' directory.")
 
 def run_custom_frida_script():
     frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
@@ -575,10 +584,88 @@ def install_mob_fs():
     else:
         print("Docker is not installed. Please install Docker first.")
 
+def get_emulator_ip():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot get emulator IP." + Style.RESET_ALL)
+        return None
+    # Try using adb shell getprop
+    result = run_adb_command('shell getprop dhcp.eth0.ipaddress')
+    if result and result.stdout.strip():
+        ip_address = result.stdout.strip()
+        return ip_address
+    else:
+        # Try using 'adb shell ip addr show eth0'
+        result = run_adb_command('shell ip -f inet addr show eth0')
+        if result and result.stdout.strip():
+            match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', result.stdout)
+            if match:
+                ip_address = match.group(1)
+                return ip_address
+    print(Fore.RED + "❗ Could not get emulator IP address." + Style.RESET_ALL)
+    return None
+
+def run_command_in_background(cmd):
+    if platform.system() == "Windows":
+        subprocess.Popen(f'start /B {cmd}', shell=True)
+    else:
+        subprocess.Popen(f'{cmd} &', shell=True)
+
+def open_new_terminal(cmd):
+    if platform.system() == "Windows":
+        # For Windows, use 'start' command with 'cmd /k' to keep the terminal open
+        subprocess.Popen(f'start cmd /k "{cmd}"', shell=True)
+    elif platform.system() == "Darwin":  # macOS
+        # For macOS, use 'osascript' to open a new Terminal window
+        apple_script = f'''
+        tell application "Terminal"
+            do script "{cmd}"
+            activate
+        end tell
+        '''
+        subprocess.Popen(['osascript', '-e', apple_script])
+    else:
+        # For Linux, try to detect the terminal emulator
+        terminal_emulators = ['gnome-terminal', 'konsole', 'xterm', 'lxterminal', 'xfce4-terminal', 'mate-terminal', 'terminator', 'urxvt']
+        for term in terminal_emulators:
+            if shutil.which(term):
+                subprocess.Popen([term, '-e', cmd])
+                break
+        else:
+            print("No supported terminal emulator found. Please run the following command manually:")
+            print(cmd)
+
 def run_mob_fs():
     if shutil.which("docker"):
-        print("Running MobSF...")
-        os.system("docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest")
+        if device_serial is None:
+            print("No emulator/device detected. Running MobSF without MOBSF_ANALYZER_IDENTIFIER...")
+            cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
+        else:
+            # Get the IP and port
+            # For emulator, device_serial will be like 'emulator-5554'
+            if device_serial.startswith('emulator-'):
+                # Extract the port
+                port = device_serial.split('-')[1]
+            elif re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', device_serial):
+                # Device serial is in the form '127.0.0.1:5555'
+                port = device_serial.split(':')[1]
+            else:
+                print("Connected device is not an emulator. Running MobSF without MOBSF_ANALYZER_IDENTIFIER...")
+                cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
+                open_new_terminal(cmd)
+                return
+
+            # Get the IP address of the emulator
+            emulator_ip = get_emulator_ip()
+            if emulator_ip is None:
+                print("Could not get emulator IP. Running MobSF without MOBSF_ANALYZER_IDENTIFIER...")
+                cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
+            else:
+                # Set the environment variable MOBSF_ANALYZER_IDENTIFIER
+                mobsf_analyzer_identifier = f"{emulator_ip}:{port}"
+                print(f"Running MobSF with MOBSF_ANALYZER_IDENTIFIER='{mobsf_analyzer_identifier}'...")
+                cmd = f"docker run -it --rm -e MOBSF_ANALYZER_IDENTIFIER='{mobsf_analyzer_identifier}' --name mobsf -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
+
+        open_new_terminal(cmd)
     else:
         print("Docker is not installed. Please install Docker first.")
 
@@ -663,19 +750,12 @@ def run_nuclei_against_apk():
             print(f"Templates directory not found at {path}.")
             return
 
-    # Ask the user for the severity level
-    severity_level = input("Enter the severity level (low, medium, high, critical) you want to use (leave blank for none): ").strip().lower()
-    
     # Prepare nuclei command
     nuclei_command = ["nuclei", "-target", output_dir]
     
     # Add template paths to the nuclei command
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
-    
-    # Add severity level if specified
-    if severity_level:
-        nuclei_command.extend(["-severity", severity_level])
 
     # Run nuclei and capture the output
     try:
@@ -748,7 +828,7 @@ def show_main_menu():
     __________       ________               .__    .___
     \______   \ ____ \______ \_______  ____ |__| __| _/
      |       _// __ \ |    |  \_  __ \/  _ \|  |/ __ | 
-     |    |   \  ___/ |    `   \  | \(  <_> )  / /_/ | 
+     |    |   \  ___/ |       \  | \(  <_> )  / /_/ | 
      |____|_  /\___  >_______  /__|   \____/|__\____ | 
             \/     \/        \/                     \/ 
     """)
@@ -799,8 +879,6 @@ def show_frida_menu():
     print("6. 🔑  Android Biometric Bypass")
     print("7. 📝  Run Custom Script")
     print("8. ↩️  Back")
-
-
 
 def main():
     while True:

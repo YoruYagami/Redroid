@@ -20,28 +20,83 @@ def detect_emulator():
     emulator_type = None
     emulator_installation_path = None
     for process in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
-        name = process.info['name']
-        cmdline = process.info.get('cmdline', [])
-        exe_path = process.info.get('exe', '')
-        if not exe_path:
-            continue  # Skip processes without an exe path
-        if name and 'Nox.exe' in name:
-            emulator_type = 'Nox'
-            emulator_installation_path = os.path.dirname(exe_path)
-            break
-        elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
-            emulator_type = 'Genymotion'
-            emulator_installation_path = os.path.dirname(exe_path)
-            break
-        elif name and ('emulator.exe' in name or 'qemu-system' in name):
-            if any('Android' in arg or 'emulator' in arg for arg in cmdline):
-                emulator_type = 'AndroidStudio'
+        try:
+            name = process.info['name']
+            cmdline = process.info.get('cmdline', [])
+            exe_path = process.info.get('exe', '')
+            if not exe_path:
+                continue  # Skip processes without an exe path
+            if name and 'Nox.exe' in name:
+                emulator_type = 'Nox'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
+            elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
+                emulator_type = 'Genymotion'
+                emulator_installation_path = os.path.dirname(exe_path)
+                break
+            elif name and ('emulator.exe' in name or 'qemu-system' in name):
+                if any('android' in arg.lower() or 'emulator' in arg.lower() for arg in cmdline):
+                    emulator_type = 'AndroidStudio'
+                    emulator_installation_path = os.path.dirname(exe_path)
+                    break
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     return emulator_type, emulator_installation_path
 
+def infer_emulator_type_from_device_serial(device_serial):
+    """Infer emulator type from the device serial number."""
+    if device_serial.startswith('emulator-'):
+        return 'AndroidStudio'
+    elif 'nox' in device_serial.lower():
+        return 'Nox'
+    elif 'genymotion' in device_serial.lower() or 'vbox' in device_serial.lower():
+        return 'Genymotion'
+    else:
+        return None
 
-# Define adb before utilizing it
+# Initialize colorama
+init(autoreset=True)
+
+# Detect emulator
+emulator_type, emulator_installation_path = detect_emulator()
+
+def get_connected_devices():
+    result = subprocess.run('adb devices', shell=True, capture_output=True, text=True)
+    devices = []
+    for line in result.stdout.strip().split('\n')[1:]:
+        if line.strip() and 'device' in line:
+            device_serial = line.split()[0]
+            devices.append(device_serial)
+    return devices
+
+devices = get_connected_devices()
+if not devices:
+    print(Fore.RED + "❌ No devices connected via adb." + Style.RESET_ALL)
+    device_serial = None
+else:
+    # List connected devices
+    print(Fore.GREEN + "Connected devices via adb:")
+    for idx, dev in enumerate(devices):
+        print(f"{idx+1}. {dev}")
+    if len(devices) == 1:
+        device_serial = devices[0]
+    else:
+        choice = input("Select a device by number: ").strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(devices):
+            device_serial = devices[int(choice)-1]
+        else:
+            print("Invalid choice.")
+            device_serial = None
+
+    # Infer emulator type from device serial if not detected
+    if not emulator_type and device_serial:
+        emulator_type = infer_emulator_type_from_device_serial(device_serial)
+
+    if emulator_type:
+        print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
+    else:
+        print(Fore.YELLOW + "⚠️  Emulator type could not be determined, but a device is connected." + Style.RESET_ALL)
+
 def get_adb_command(emulator_type, emulator_installation_path):
     if emulator_type == 'Nox':
         adb_command = f'\"{emulator_installation_path}\\nox_adb.exe\"'
@@ -55,50 +110,13 @@ def get_adb_command(emulator_type, emulator_installation_path):
         adb_command = 'adb'
     return adb_command
 
-# Initialize colorama
-init(autoreset=True)
-
-# Detect emulator
-emulator_type, emulator_installation_path = detect_emulator()
-if emulator_type:
-    print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
-else:
-    print(Fore.RED + "❌ Emulator not detected." + Style.RESET_ALL)
-
 adb_command = get_adb_command(emulator_type, emulator_installation_path)
 
 def run_emulator_specific_function():
-    if not emulator_type:
-        print(Fore.RED + "❗ This function requires an emulator. Please start an emulator and try again." + Style.RESET_ALL)
+    if not device_serial:
+        print(Fore.RED + "❗ This function requires a connected device or emulator." + Style.RESET_ALL)
         return False
     return True
-
-def get_connected_devices(adb_command):
-    result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True)
-    devices = []
-    for line in result.stdout.strip().split('\n')[1:]:
-        if line.strip():
-            device_serial = line.split()[0]
-            devices.append(device_serial)
-    return devices
-
-devices = get_connected_devices(adb_command)
-if not devices:
-    print(Fore.YELLOW + "⚠️ No devices connected via adb." + Style.RESET_ALL)
-    device_serial = None
-elif len(devices) == 1:
-    device_serial = devices[0]
-else:
-    # Multiple devices connected, ask user to select one
-    print("Multiple devices connected:")
-    for idx, dev in enumerate(devices):
-        print(f"{idx+1}. {dev}")
-    choice = input("Select a device: ").strip()
-    if choice.isdigit() and 1 <= int(choice) <= len(devices):
-        device_serial = devices[int(choice)-1]
-    else:
-        print("Invalid choice.")
-        device_serial = None
 
 def run_adb_command(command):
     if not device_serial:
@@ -370,7 +388,10 @@ def check_go_installed():
         return False
 
 def remove_ads_and_bloatware():
-    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
+    if emulator_type != 'Nox':
+        print(Fore.RED + "❗ This function is specific to the Nox emulator." + Style.RESET_ALL)
+        return
+    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from Nox emulator..." + Style.RESET_ALL)
     
     run_adb_command('root')
     run_adb_command('remount')
@@ -386,13 +407,16 @@ def remove_ads_and_bloatware():
         run_adb_command(f'shell rm -rf /system/app/{app}')
     
     print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
-
+    
     print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
     run_adb_command('shell su -c \'setprop ctl.restart zygote\'')
-
+    
     print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
 
 def install_frida_server():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot install Frida Server." + Style.RESET_ALL)
+        return
     print("Checking Installed Frida-Tools Version")
     try:
         frida_version_output = subprocess.check_output("frida --version 2>&1", shell=True, stderr=subprocess.STDOUT, text=True)
@@ -404,6 +428,9 @@ def install_frida_server():
         print(f"Frida-Tools Version: {frida_version}")
 
         arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
+        if arch_result is None:
+            print("Error: Unable to determine CPU architecture of the emulator.")
+            return
         emulator_arch = arch_result.stdout.strip()
         print(f"CPU Architecture of Emulator: {emulator_arch}")
 
@@ -435,6 +462,9 @@ def install_frida_server():
         print("Frida Tools is not installed on this system.")
 
 def is_frida_server_running():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot check Frida Server status." + Style.RESET_ALL)
+        return False
     try:
         result = run_adb_command('shell pgrep -f frida-server')
         return result.returncode == 0 and result.stdout.strip()  # Returncode 0 means the process is running
@@ -443,6 +473,9 @@ def is_frida_server_running():
         return False
 
 def run_frida_server():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot run Frida Server." + Style.RESET_ALL)
+        return
     if is_frida_server_running():
         print("Frida server is already running.")
         return
@@ -453,7 +486,7 @@ def run_frida_server():
     print("Frida Server should be running in the new terminal.")
 
 def list_installed_applications():
-    print("Listing installed applications on the emulator...")
+    print("Listing installed applications on the device...")
     os.system("frida-ps -Uai")
 
 def list_running_apps():

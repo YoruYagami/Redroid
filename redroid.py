@@ -23,6 +23,8 @@ def detect_emulator():
         name = process.info['name']
         cmdline = process.info.get('cmdline', [])
         exe_path = process.info.get('exe', '')
+        if not exe_path:
+            continue  # Skip processes without an exe path
         if name and 'Nox.exe' in name:
             emulator_type = 'Nox'
             emulator_installation_path = os.path.dirname(exe_path)
@@ -37,6 +39,7 @@ def detect_emulator():
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
     return emulator_type, emulator_installation_path
+
 
 # Define adb before utilizing it
 def get_adb_command(emulator_type, emulator_installation_path):

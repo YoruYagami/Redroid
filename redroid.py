@@ -12,34 +12,26 @@ from OpenSSL import crypto
 from requests.exceptions import ConnectionError
 from bs4 import BeautifulSoup
 from colorama import init, Fore, Style
+import shlex
 import ctypes
 import sys
 
 def detect_emulator():
-    """Detect whether Nox, Genymotion, or Android Studio emulator is running."""
+    """Detect whether Nox or Genymotion emulator is running."""
     emulator_type = None
     emulator_installation_path = None
     for process in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
         name = process.info['name']
         cmdline = process.info.get('cmdline', [])
-        exe_path = process.info.get('exe', '')
-        if not exe_path:
-            continue  # Skip processes without an exe path
         if name and 'Nox.exe' in name:
             emulator_type = 'Nox'
-            emulator_installation_path = os.path.dirname(exe_path)
+            emulator_installation_path = os.path.dirname(process.info['exe'])
             break
         elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
             emulator_type = 'Genymotion'
-            emulator_installation_path = os.path.dirname(exe_path)
+            emulator_installation_path = os.path.dirname(process.info['exe'])
             break
-        elif name and ('emulator.exe' in name or 'qemu-system' in name):
-            if any('Android' in arg or 'emulator' in arg for arg in cmdline):
-                emulator_type = 'AndroidStudio'
-                emulator_installation_path = os.path.dirname(exe_path)
-                break
     return emulator_type, emulator_installation_path
-
 
 # Define adb before utilizing it
 def get_adb_command(emulator_type, emulator_installation_path):
@@ -242,8 +234,8 @@ def download_latest_jadx():
                         with open(local_filepath, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
-                            print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
-                            return
+                        print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
+                        return
             print("No suitable Jadx executable found in the latest release.")
         except Exception as e:
             print(f"An error occurred while trying to download the latest version of Jadx: {str(e)}")
@@ -433,6 +425,14 @@ def install_frida_server():
             print(f"An error occurred while setting up Frida Server: {str(e)}")
     else:
         print("Frida Tools is not installed on this system.")
+
+def is_frida_server_running():
+    try:
+        result = run_adb_command('shell pgrep -f frida-server')
+        return result.returncode == 0 and result.stdout.strip()  # Returncode 0 means the process is running
+    except Exception as e:
+        print(f"Error checking if Frida server is running: {str(e)}")
+        return False
 
 def is_frida_server_running():
     try:

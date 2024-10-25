@@ -20,64 +20,40 @@ def detect_emulator():
     emulator_type = None
     emulator_installation_path = None
     for process in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
-        try:
-            name = process.info['name']
-            cmdline = process.info.get('cmdline', [])
-            exe_path = process.info.get('exe', '')
-            if not exe_path:
-                continue  # Skip processes without an exe path
-            if name and 'Nox.exe' in name:
-                emulator_type = 'Nox'
+        name = process.info['name']
+        cmdline = process.info.get('cmdline', [])
+        exe_path = process.info.get('exe', '')
+        if not exe_path:
+            continue  # Skip processes without an exe path
+        if name and 'Nox.exe' in name:
+            emulator_type = 'Nox'
+            emulator_installation_path = os.path.dirname(exe_path)
+            break
+        elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
+            emulator_type = 'Genymotion'
+            emulator_installation_path = os.path.dirname(exe_path)
+            break
+        elif name and ('emulator.exe' in name or 'qemu-system' in name):
+            if any('Android' in arg or 'emulator' in arg for arg in cmdline):
+                emulator_type = 'AndroidStudio'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
-            elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
-                emulator_type = 'Genymotion'
-                emulator_installation_path = os.path.dirname(exe_path)
-                break
-            elif name and ('emulator.exe' in name or 'qemu-system' in name):
-                if any('android' in arg.lower() or 'emulator' in arg.lower() for arg in cmdline):
-                    emulator_type = 'AndroidStudio'
-                    emulator_installation_path = os.path.dirname(exe_path)
-                    break
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
     return emulator_type, emulator_installation_path
 
+
+# Define adb before utilizing it
 def get_adb_command(emulator_type, emulator_installation_path):
-    """Get the adb command based on emulator type and installation path."""
-    adb_command = 'adb'  # Default adb command
-
     if emulator_type == 'Nox':
-        adb_path = os.path.join(emulator_installation_path, 'nox_adb.exe')
-        if os.path.exists(adb_path):
-            adb_command = f'"{adb_path}"'
+        adb_command = f'\"{emulator_installation_path}\\nox_adb.exe\"'
     elif emulator_type == 'Genymotion':
-        adb_path = os.path.join(emulator_installation_path, 'tools', 'adb.exe')
-        if os.path.exists(adb_path):
-            adb_command = f'"{adb_path}"'
-    elif emulator_type == 'AndroidStudio':
-        # Try to find adb in the Android SDK platform-tools directory
-        sdk_paths = [
-            os.path.join(os.environ.get('ANDROID_HOME', ''), 'platform-tools', 'adb'),
-            os.path.join(os.environ.get('ANDROID_SDK_ROOT', ''), 'platform-tools', 'adb'),
-            os.path.expanduser('~/Library/Android/sdk/platform-tools/adb'),  # macOS default
-            os.path.expanduser('~/Android/Sdk/platform-tools/adb'),  # Linux default
-        ]
-        for path in sdk_paths:
-            if os.path.exists(path):
-                adb_command = path
-                break
+        # Genymotion's adb is located in 'tools' directory
+        adb_command = f'\"{emulator_installation_path}\\tools\\adb.exe\"'
+        if not os.path.exists(adb_command.strip('"')):
+            # Use system adb
+            adb_command = 'adb'
+    else:
+        adb_command = 'adb'
     return adb_command
-
-def is_adb_available(adb_command):
-    """Check if ADB is installed and available."""
-    try:
-        subprocess.run(f'{adb_command} version', shell=True, capture_output=True, text=True, check=True)
-        return True
-    except FileNotFoundError:
-        return False
-    except subprocess.CalledProcessError:
-        return False
 
 # Initialize colorama
 init(autoreset=True)
@@ -87,186 +63,81 @@ emulator_type, emulator_installation_path = detect_emulator()
 if emulator_type:
     print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
 else:
-    print(Fore.YELLOW + "⚠️ Emulator not detected. Proceeding without emulator-specific optimizations." + Style.RESET_ALL)
+    print(Fore.RED + "❌ Emulator not detected." + Style.RESET_ALL)
 
 adb_command = get_adb_command(emulator_type, emulator_installation_path)
 
-# Check if adb is available
-if not is_adb_available(adb_command):
-    print(Fore.YELLOW + f"⚠️ 'adb' not found in PATH or emulator directory." + Style.RESET_ALL)
-    # Attempt to find adb in common locations
-    if platform.system() == 'Windows':
-        possible_adb_locations = [
-            r'C:\Program Files (x86)\Android\android-sdk\platform-tools\adb.exe',
-            r'C:\Program Files\Android\android-sdk\platform-tools\adb.exe',
-        ]
-    else:
-        possible_adb_locations = [
-            '/usr/bin/adb',
-            '/usr/local/bin/adb',
-            os.path.expanduser('~/Android/Sdk/platform-tools/adb'),
-        ]
-    for adb_path in possible_adb_locations:
-        if os.path.exists(adb_path):
-            adb_command = adb_path
-            print(Fore.GREEN + f"✅ Found adb at {adb_command}" + Style.RESET_ALL)
-            break
-    else:
-        print(Fore.RED + "❌ 'adb' command not found. Please ensure that Android Debug Bridge (ADB) is installed." + Style.RESET_ALL)
-        # Proceeding without ADB, but some functions will not work
-        adb_command = None
-else:
-    print(Fore.GREEN + f"✅ 'adb' command found: {adb_command}" + Style.RESET_ALL)
-
-def run_adb_command(command_list):
-    if not adb_command:
-        print(Fore.RED + "❗ 'adb' command is not available. Cannot execute adb commands." + Style.RESET_ALL)
-        return None
-    if not device_serial:
-        print(Fore.RED + "❗ No device selected. This command requires a connected device or emulator." + Style.RESET_ALL)
-        return None
-    full_command = f'{adb_command} -s {device_serial} ' + ' '.join(command_list)
-    try:
-        result = subprocess.run(full_command, shell=True, text=True, capture_output=True, check=True)
-        return result
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"Error running adb command: {e}" + Style.RESET_ALL)
-        return None
-    except FileNotFoundError:
-        print(Fore.RED + "❌ Error: 'adb' command not found. Please ensure that ADB is installed." + Style.RESET_ALL)
-        return None
-
-def get_connected_devices():
-    if not adb_command:
-        print(Fore.RED + "❗ 'adb' command is not available. Cannot list connected devices." + Style.RESET_ALL)
-        return []
-    try:
-        result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True, check=True)
-        devices = []
-        for line in result.stdout.strip().split('\n')[1:]:
-            if line.strip() and 'device' in line:
-                device_serial = line.split()[0]
-                devices.append(device_serial)
-        return devices
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"Error executing adb: {e}" + Style.RESET_ALL)
-        return []
-
-devices = get_connected_devices()
-device_serial = None
-if not devices:
-    print(Fore.YELLOW + "⚠️ No devices connected via adb." + Style.RESET_ALL)
-else:
-    # List connected devices
-    print(Fore.GREEN + "Connected devices via adb:")
-    for idx, dev in enumerate(devices):
-        print(f"{idx+1}. {dev}")
-    if len(devices) == 1:
-        device_serial = devices[0]
-    else:
-        while True:
-            choice = input("Select a device by number: ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(devices):
-                device_serial = devices[int(choice)-1]
-                break
-            else:
-                print("Invalid choice. Please try again.")
-
-    # Infer emulator type from device serial if not detected
-    def infer_emulator_type_from_device_serial(device_serial):
-        if device_serial.startswith('emulator-'):
-            return 'AndroidStudio'
-        elif 'nox' in device_serial.lower():
-            return 'Nox'
-        elif 'genymotion' in device_serial.lower() or 'vbox' in device_serial.lower():
-            return 'Genymotion'
-        else:
-            return None
-
-    if not emulator_type and device_serial:
-        emulator_type = infer_emulator_type_from_device_serial(device_serial)
-
-    if emulator_type:
-        print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
-    else:
-        print(Fore.YELLOW + "⚠️ Emulator type could not be determined, but a device is connected." + Style.RESET_ALL)
-
-    # Display emulator IP address
-    def get_emulator_ip():
-        if not device_serial:
-            print(Fore.RED + "❗ No device selected. Cannot get emulator IP." + Style.RESET_ALL)
-            return None
-        # Try using adb shell getprop
-        result = run_adb_command(['shell', 'getprop', 'dhcp.eth0.ipaddress'])
-        if result and result.stdout.strip():
-            ip_address = result.stdout.strip()
-            return ip_address
-        else:
-            # Try using 'adb shell ip addr show eth0'
-            result = run_adb_command(['shell', 'ip', '-f', 'inet', 'addr', 'show', 'eth0'])
-            if result and result.stdout.strip():
-                match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', result.stdout)
-                if match:
-                    ip_address = match.group(1)
-                    return ip_address
-        print(Fore.RED + "❗ Could not get emulator IP address." + Style.RESET_ALL)
-        return None
-
-    emulator_ip = get_emulator_ip()
-    if emulator_ip:
-        print(Fore.CYAN + f"🌐 Emulator IP Address: {emulator_ip}" + Style.RESET_ALL)
-
-    # Check if emulator is rooted
-    def is_emulator_rooted():
-        result = run_adb_command(['shell', 'whoami'])
-        if result and result.stdout.strip() == 'root':
-            return True
-        else:
-            return False
-
-    if is_emulator_rooted():
-        print(Fore.GREEN + "🔑 Emulator is rooted." + Style.RESET_ALL)
-    else:
-        print(Fore.YELLOW + "🔒 Emulator is not rooted." + Style.RESET_ALL)
-
 def run_emulator_specific_function():
-    if not device_serial:
-        print(Fore.RED + "❗ This function requires a connected device or emulator." + Style.RESET_ALL)
-        return False
-    if not adb_command:
-        print(Fore.RED + "❗ 'adb' command is not available. Cannot execute adb commands." + Style.RESET_ALL)
+    if not emulator_type:
+        print(Fore.RED + "❗ This function requires an emulator. Please start an emulator and try again." + Style.RESET_ALL)
         return False
     return True
 
+def get_connected_devices(adb_command):
+    result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True)
+    devices = []
+    for line in result.stdout.strip().split('\n')[1:]:
+        if line.strip():
+            device_serial = line.split()[0]
+            devices.append(device_serial)
+    return devices
+
+devices = get_connected_devices(adb_command)
+if not devices:
+    print(Fore.YELLOW + "⚠️ No devices connected via adb." + Style.RESET_ALL)
+    device_serial = None
+elif len(devices) == 1:
+    device_serial = devices[0]
+else:
+    # Multiple devices connected, ask user to select one
+    print("Multiple devices connected:")
+    for idx, dev in enumerate(devices):
+        print(f"{idx+1}. {dev}")
+    choice = input("Select a device: ").strip()
+    if choice.isdigit() and 1 <= int(choice) <= len(devices):
+        device_serial = devices[int(choice)-1]
+    else:
+        print("Invalid choice.")
+        device_serial = None
+
+def run_adb_command(command):
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. This command requires a connected device or emulator." + Style.RESET_ALL)
+        return None
+    full_command = f'{adb_command} -s {device_serial} {command}'
+    result = subprocess.run(full_command, shell=True, text=True, capture_output=True)
+    return result
+
 def get_emulator_proxy_status():
-    if not run_emulator_specific_function():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot retrieve proxy status." + Style.RESET_ALL)
         return
-    result = run_adb_command(['shell', 'settings', 'get', 'global', 'http_proxy'])
+    result = run_adb_command('shell settings get global http_proxy')
     if result and result.stdout.strip():
         print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + f"{result.stdout.strip()}" + Style.RESET_ALL)
     else:
         print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
 
 def set_emulator_proxy(ip, port):
-    if not run_emulator_specific_function():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot set proxy." + Style.RESET_ALL)
         return
-    run_adb_command(['shell', 'settings', 'put', 'global', 'http_proxy', f'{ip}:{port}'])
+    run_adb_command(f'shell settings put global http_proxy {ip}:{port}')
     print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
 
 def remove_emulator_proxy():
-    if not run_emulator_specific_function():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot remove proxy." + Style.RESET_ALL)
         return
-    run_adb_command(['shell', 'settings', 'delete', 'global', 'http_proxy'])
+    run_adb_command('shell settings delete global http_proxy')
     print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
 
 def open_adb_shell():
-    if not run_emulator_specific_function():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot open ADB shell." + Style.RESET_ALL)
         return
     print("Opening ADB Shell. Type 'exit' to return to the main menu.")
-    try:
-        subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"Error opening ADB shell: {e}" + Style.RESET_ALL)
+    subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
 
 def get_local_ipv4_addresses():
     ip_dict = {}
@@ -282,7 +153,7 @@ def try_download_certificate(ip, port):
     output_pem_file = "9a5ba575.0"
 
     try:
-        response = requests.get(cert_url, timeout=10)
+        response = requests.get(cert_url)
 
         if response.status_code == 200:
             with open(input_der_file, "wb") as certificate_file:
@@ -297,16 +168,14 @@ def try_download_certificate(ip, port):
                 pem_data = crypto.dump_certificate(crypto.FILETYPE_PEM, cert)
                 pem_file.write(pem_data)
 
-            run_adb_command(['root'])
-            run_adb_command(['remount'])
-            run_adb_command(['push', output_pem_file, '/system/etc/security/cacerts/'])
-            run_adb_command(['shell', 'chmod', '644', f'/system/etc/security/cacerts/{output_pem_file}'])
+            run_adb_command('root')
+            run_adb_command('remount')
+            run_adb_command(f'push {output_pem_file} /system/etc/security/cacerts/')
+            run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_pem_file}')
             print("Burp Suite Certificate Installed Successfully in the emulator")
-            os.remove(input_der_file)
-            os.remove(output_pem_file)
             return True
         else:
-            print(f"Error: Unable to download the certificate from {cert_url}. Status code: {response.status_code}")
+            print(f"Error: Unable to download the certificate from {cert_url}.")
             return False
 
     except ConnectionError:
@@ -318,7 +187,7 @@ def try_download_certificate(ip, port):
 
 def install_burpsuite_certificate(port):
     print(Fore.CYAN + "🔍 Attempting to download the Burp Suite certificate from localhost..." + Style.RESET_ALL)
-
+    
     # Check localhost first
     if try_download_certificate('127.0.0.1', port):
         print(Fore.GREEN + "✅ Successfully downloaded and installed the Burp Suite certificate from localhost." + Style.RESET_ALL)
@@ -327,7 +196,7 @@ def install_burpsuite_certificate(port):
     # Check other local IP addresses
     print(Fore.CYAN + "🔍 Checking other local IP addresses for Burp Suite certificate..." + Style.RESET_ALL)
     ipv4_addresses = get_local_ipv4_addresses()
-
+    
     for ip in ipv4_addresses.values():
         if ip != '127.0.0.1' and try_download_certificate(ip, port):
             print(Fore.GREEN + f"✅ Successfully downloaded and installed the Burp Suite certificate from {ip}." + Style.RESET_ALL)
@@ -336,23 +205,18 @@ def install_burpsuite_certificate(port):
     print(Fore.RED + "❌ Failed to download the Burp Suite certificate from any local IP address." + Style.RESET_ALL)
 
 def install_tool(tool):
-    try:
-        subprocess.run(['pip', 'install', tool, '--break-system-packages'], check=True)
-        print(Fore.GREEN + f"✅ {tool} installed successfully." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"Error installing {tool}: {e}" + Style.RESET_ALL)
+    subprocess.run(['pip', 'install', tool])
 
 def download_latest_jadx():
     system = platform.system().lower()
     if system == "linux":
         # Check for specific Linux distributions
-        distro_info = os.popen('cat /etc/*release').read().lower()
-        if 'debian' in distro_info or 'ubuntu' in distro_info or 'kali' in distro_info:
+        if os.path.exists("/etc/debian_version"):  # Debian
             print("Detected Debian-based system (e.g., Kali Linux)")
             os.system("sudo apt update && sudo apt install jadx -y")
             print("Jadx installed successfully via apt.")
-        elif 'arch' in distro_info or 'blackarch' in distro_info:
-            print("Detected Arch Linux or BlackArch")
+        elif os.path.exists("/etc/arch-release"):  # Arch
+            print("Detected Arch Linux")
             os.system("sudo pacman -Syu jadx --noconfirm")
             print("Jadx installed successfully via pacman.")
         else:
@@ -367,19 +231,19 @@ def download_latest_jadx():
                 if 'no-jre-win.exe' in asset['name']:
                     download_url = asset['browser_download_url']
                     local_filename = asset['name']
-
+                    
                     # Get the current directory path of the script
                     script_dir = os.path.dirname(os.path.abspath(__file__))
                     local_filepath = os.path.join(script_dir, "jadx-gui.exe")
-
+                    
                     print(f"Downloading {local_filename} from {download_url}")
                     with requests.get(download_url, stream=True) as r:
                         r.raise_for_status()
                         with open(local_filepath, 'wb') as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
-                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
-                    return
+                            print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in the script directory: {local_filepath}")
+                            return
             print("No suitable Jadx executable found in the latest release.")
         except Exception as e:
             print(f"An error occurred while trying to download the latest version of Jadx: {str(e)}")
@@ -388,18 +252,14 @@ def download_latest_jadx():
 
 def get_latest_apktool_url():
     url = "https://bitbucket.org/iBotPeaches/apktool/downloads/"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for link in soup.find_all('a'):
-            href = link.get('href')
-            if href and href.endswith('.jar'):
-                return f"https://bitbucket.org{href}"
-        return None
-    except Exception as e:
-        print(f"Error fetching apktool URL: {e}")
-        return None
+    response = requests.get(url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.text, 'html.parser')
+    for link in soup.find_all('a'):
+        href = link.get('href')
+        if href and href.endswith('.jar'):
+            return f"https://bitbucket.org{href}"
+    return None
 
 def setup_apktool():
     try:
@@ -408,22 +268,21 @@ def setup_apktool():
             distro_info = os.popen('cat /etc/*release').read().lower()
             if 'kali' in distro_info or 'debian' in distro_info or 'ubuntu' in distro_info:
                 os.system('sudo apt update && sudo apt install apktool -y')
-            elif 'arch' in distro_info or 'manjaro' in distro_info or 'blackarch' in distro_info:
+            elif 'arch' in distro_info or 'manjaro' in distro_info:
                 os.system('sudo pacman -Syu apktool --noconfirm')
             else:
                 print("Unsupported Linux distribution")
                 return
-            print(Fore.GREEN + "✅ Apktool installed successfully." + Style.RESET_ALL)
         elif system == "windows":
             bat_url = "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat"
             jar_url = get_latest_apktool_url()
             if not jar_url:
                 print("Failed to find the latest apktool.jar")
                 return
-
+            
             # Get the current directory path of the script
             script_dir = os.path.dirname(os.path.abspath(__file__))
-
+            
             # Download apktool.bat
             print(f"Downloading apktool.bat from {bat_url}")
             response = requests.get(bat_url)
@@ -431,7 +290,7 @@ def setup_apktool():
             bat_path = os.path.join(script_dir, "apktool.bat")
             with open(bat_path, "wb") as file:
                 file.write(response.content)
-
+            
             # Download apktool.jar
             print(f"Downloading apktool.jar from {jar_url}")
             response = requests.get(jar_url)
@@ -439,7 +298,7 @@ def setup_apktool():
             jar_path = os.path.join(script_dir, "apktool.jar")
             with open(jar_path, "wb") as file:
                 file.write(response.content)
-
+            
             print(f"apktool setup completed. Files downloaded to the script directory: {bat_path} and {jar_path}")
             print("Please move apktool.bat and apktool.jar to the C:\\Windows folder manually.")
         else:
@@ -456,16 +315,8 @@ def is_admin():
 
 def add_to_system_path(path):
     """Add a directory to the system PATH environment variable."""
-    try:
-        if platform.system() == 'Windows':
-            subprocess.run(f'setx /M PATH "%PATH%;{path}"', shell=True, check=True)
-        else:
-            with open(os.path.expanduser('~/.bashrc'), 'a') as f:
-                f.write(f'\nexport PATH="$PATH:{path}"\n')
-            os.environ['PATH'] += f':{path}'
-        print(f"Added {path} to the system PATH.")
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"Error adding {path} to system PATH: {e}" + Style.RESET_ALL)
+    subprocess.run(f'setx /M PATH "%PATH%;{path}"', shell=True)
+    print(f"Added {path} to the system PATH.")
 
 def check_nuclei_installed():
     """Check if Nuclei can be executed from the terminal."""
@@ -480,23 +331,33 @@ def install_nuclei():
     if not check_go_installed():
         print("Go is not installed on your system. Please install Go and try again.")
         return
-
+    
     try:
         print("Installing Nuclei...")
         subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
         print("Nuclei installed successfully.")
-
+    
         if not check_nuclei_installed():
-            go_bin_path = os.path.expanduser("~/go/bin")
+            go_bin_path = os.path.expanduser("~\\go\\bin")
             add_to_system_path(go_bin_path)
-
+            
+            if not check_nuclei_installed():
+                print("Running with elevated privileges to add Nuclei to PATH...")
+                if is_admin():
+                    add_to_system_path(go_bin_path)
+                else:
+                    # Elevate to admin only for modifying the PATH
+                    print("Requesting administrative privileges to modify PATH...")
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, "elevate", 1)
+                    return  # Exit after elevating to avoid re-running as admin
+            
             if not check_nuclei_installed():
                 print("Nuclei is still not executable. Please check your PATH settings manually.")
             else:
                 print("Nuclei is now executable from the terminal.")
         else:
             print("Nuclei is already executable from the terminal.")
-
+    
     except Exception as e:
         print(f"An error occurred during Nuclei installation: {str(e)}")
 
@@ -509,97 +370,79 @@ def check_go_installed():
         return False
 
 def remove_ads_and_bloatware():
-    if emulator_type != 'Nox':
-        print(Fore.RED + "❗ This function is specific to the Nox emulator." + Style.RESET_ALL)
-        return
-    if not run_emulator_specific_function():
-        return
-    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from Nox emulator..." + Style.RESET_ALL)
-
-    run_adb_command(['root'])
-    run_adb_command(['remount'])
-
+    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
+    
+    run_adb_command('root')
+    run_adb_command('remount')
+    
     bloatware_apps = [
         'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
         'Helper', 'LiveWallpapersPicker', 'PrintRecommendationService', 'PrintSpooler',
         'WallpaperBackup', 'newAppNameEn'
     ]
-
+    
     for app in bloatware_apps:
         print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
-        run_adb_command(['shell', 'rm', '-rf', f'/system/app/{app}'])
-
+        run_adb_command(f'shell rm -rf /system/app/{app}')
+    
     print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
 
     print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
-    run_adb_command(['shell', 'su', '-c', 'setprop', 'ctl.restart', 'zygote'])
+    run_adb_command('shell su -c \'setprop ctl.restart zygote\'')
 
     print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
 
 def install_frida_server():
-    if not device_serial:
-        print(Fore.RED + "❗ No device selected. Cannot install Frida Server." + Style.RESET_ALL)
-        return
-    if not adb_command:
-        print(Fore.RED + "❗ 'adb' command is not available. Cannot install Frida Server." + Style.RESET_ALL)
-        return
     print("Checking Installed Frida-Tools Version")
     try:
-        frida_version_output = subprocess.check_output(["frida", "--version"], stderr=subprocess.STDOUT, text=True)
-        frida_version_match = re.search(r'(\d+\.\d+\.\d+)', frida_version_output)
-        if frida_version_match:
-            frida_version = frida_version_match.group(1)
-            print(f"Frida-Tools Version: {frida_version}")
-
-            arch_result = run_adb_command(['shell', 'getprop', 'ro.product.cpu.abi'])
-            if arch_result is None:
-                print("Error: Unable to determine CPU architecture of the emulator.")
-                return
-            emulator_arch = arch_result.stdout.strip()
-            print(f"CPU Architecture of Emulator: {emulator_arch}")
-
-            print("Downloading Frida-Server With Same Version")
-            frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
-
-            try:
-                response = requests.get(frida_server_url, timeout=30)
-                response.raise_for_status()
-                with open("frida-server.xz", "wb") as f:
-                    f.write(response.content)
-
-                with lzma.open("frida-server.xz") as f:
-                    with open("frida-server", "wb") as out_f:
-                        out_f.write(f.read())
-
-                os.remove("frida-server.xz")
-
-                run_adb_command(['push', 'frida-server', '/data/local/tmp/'])
-                os.remove("frida-server")
-
-                run_adb_command(['shell', 'chmod', '+x', '/data/local/tmp/frida-server'])
-                print("Provided executable permissions to Frida Server.")
-                print("Frida Server setup completely on the emulator.")
-                print()
-            except Exception as e:
-                print(f"An error occurred while setting up Frida Server: {str(e)}")
-        else:
-            print("Frida Tools is not installed on this system.")
+        frida_version_output = subprocess.check_output("frida --version 2>&1", shell=True, stderr=subprocess.STDOUT, text=True)
     except subprocess.CalledProcessError:
+        print("Frida Tools is not installed on this system.")
+        return
+    if re.search(r'(\d+\.\d+\.\d+)', frida_version_output):
+        frida_version = re.search(r'(\d+\.\d+\.\d+)', frida_version_output).group(1)
+        print(f"Frida-Tools Version: {frida_version}")
+
+        arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
+        emulator_arch = arch_result.stdout.strip()
+        print(f"CPU Architecture of Emulator: {emulator_arch}")
+
+        print("Downloading Frida-Server With Same Version")
+        frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
+
+        try:
+            response = requests.get(frida_server_url)
+            response.raise_for_status()
+            with open("frida-server.xz", "wb") as f:
+                f.write(response.content)
+
+            with lzma.open("frida-server.xz") as f:
+                with open("frida-server", "wb") as out_f:
+                    out_f.write(f.read())
+
+            os.remove("frida-server.xz")
+
+            run_adb_command('push frida-server /data/local/tmp/')
+            os.remove("frida-server")
+
+            run_adb_command('shell chmod +x /data/local/tmp/frida-server')
+            print("Provided executable permissions to Frida Server.")
+            print("Frida Server setup completely on the emulator.")
+            print()
+        except Exception as e:
+            print(f"An error occurred while setting up Frida Server: {str(e)}")
+    else:
         print("Frida Tools is not installed on this system.")
 
 def is_frida_server_running():
-    if not run_emulator_specific_function():
-        return False
     try:
-        result = run_adb_command(['shell', 'pgrep', '-f', 'frida-server'])
+        result = run_adb_command('shell pgrep -f frida-server')
         return result.returncode == 0 and result.stdout.strip()  # Returncode 0 means the process is running
     except Exception as e:
         print(f"Error checking if Frida server is running: {str(e)}")
         return False
 
 def run_frida_server():
-    if not run_emulator_specific_function():
-        return
     if is_frida_server_running():
         print("Frida server is already running.")
         return
@@ -610,15 +453,12 @@ def run_frida_server():
     print("Frida Server should be running in the new terminal.")
 
 def list_installed_applications():
-    print("Listing installed applications on the device...")
-    try:
-        subprocess.run(["frida-ps", "-Uai"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error listing installed applications: {e}")
+    print("Listing installed applications on the emulator...")
+    os.system("frida-ps -Uai")
 
 def list_running_apps():
     try:
-        result = subprocess.run(['frida-ps', '-U', '-a'], capture_output=True, text=True, check=True)
+        result = subprocess.run(['frida-ps', '-U', '-a'], capture_output=True, text=True)
         print("Currently running applications:")
         print(result.stdout)
     except subprocess.CalledProcessError as e:
@@ -629,10 +469,6 @@ def run_ssl_pinning_bypass():
     if os.path.exists(script_path):
         list_running_apps()
         app_package = input("Enter the app package name to run the SSL pinning bypass on: ").strip()
-
-        if not app_package:
-            print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
-            return
 
         # Start the app and attach Frida
         cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
@@ -652,10 +488,6 @@ def run_root_check_bypass():
     if os.path.exists(script_path):
         list_running_apps()
         app_package = input("Enter the app package name to run the root check bypass on: ").strip()
-
-        if not app_package:
-            print(Fore.RED + "❗ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
-            return
 
         # Start the app and attach Frida
         cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
@@ -681,19 +513,19 @@ def android_biometric_bypass():
 
 def run_custom_frida_script():
     frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
-
+    
     # List existing known scripts
     known_scripts = {
         'ssl-pinning-bypass.js',
         'root-check-bypass.js',
         'android-biometric-bypass.js'
     }
-
+    
     # Find any new/unknown JS scripts in the frida-scripts directory
     if not os.path.exists(frida_scripts_dir):
         print(Fore.RED + f"❌ 'frida-scripts' directory does not exist at {frida_scripts_dir}." + Style.RESET_ALL)
         return
-
+    
     all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
     unknown_scripts = all_scripts - known_scripts
 
@@ -735,9 +567,6 @@ def run_custom_frida_script():
 
     # Run the custom script with Frida
     if app_package:
-        if not os.path.exists(script_path):
-            print(Fore.RED + f"❌ Script not found at {script_path}." + Style.RESET_ALL)
-            return
         try:
             print(Fore.GREEN + "🚀 Running custom script..." + Style.RESET_ALL)
             subprocess.run(['frida', '-U', '-f', app_package, '-l', script_path, '--no-pause'])
@@ -750,24 +579,41 @@ def run_custom_frida_script():
 def install_mob_fs():
     if shutil.which("docker"):
         print("Installing MobSF...")
-        try:
-            subprocess.run(["docker", "pull", "opensecurity/mobile-security-framework-mobsf:latest"], check=True)
-            print("MobSF installed successfully.")
-        except subprocess.CalledProcessError as e:
-            print(Fore.RED + f"Error installing MobSF: {e}" + Style.RESET_ALL)
+        os.system("docker pull opensecurity/mobile-security-framework-mobsf:latest")
+        print("MobSF installed successfully.")
     else:
         print("Docker is not installed. Please install Docker first.")
 
+def get_emulator_ip():
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Cannot get emulator IP." + Style.RESET_ALL)
+        return None
+    # Try using adb shell getprop
+    result = run_adb_command('shell getprop dhcp.eth0.ipaddress')
+    if result and result.stdout.strip():
+        ip_address = result.stdout.strip()
+        return ip_address
+    else:
+        # Try using 'adb shell ip addr show eth0'
+        result = run_adb_command('shell ip -f inet addr show eth0')
+        if result and result.stdout.strip():
+            match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', result.stdout)
+            if match:
+                ip_address = match.group(1)
+                return ip_address
+    print(Fore.RED + "❗ Could not get emulator IP address." + Style.RESET_ALL)
+    return None
+
 def run_command_in_background(cmd):
     if platform.system() == "Windows":
-        subprocess.Popen(['cmd', '/c', cmd], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.Popen(f'start /B {cmd}', shell=True)
     else:
-        subprocess.Popen(cmd.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.Popen(f'{cmd} &', shell=True)
 
 def open_new_terminal(cmd):
     if platform.system() == "Windows":
         # For Windows, use 'start' command with 'cmd /k' to keep the terminal open
-        subprocess.Popen(['start', 'cmd', '/k', cmd], shell=True)
+        subprocess.Popen(f'start cmd /k "{cmd}"', shell=True)
     elif platform.system() == "Darwin":  # macOS
         # For macOS, use 'osascript' to open a new Terminal window
         apple_script = f'''
@@ -829,13 +675,13 @@ def run_nuclei_against_apk():
     if not os.path.exists(apk_path):
         print(f"Error: The file {apk_path} does not exist.")
         return
-
+    
     # Set the output directory to the current directory
     script_dir = os.getcwd()
     output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])  # Remove the .apk extension
-
+    
     apktool_command = "apktool" if platform.system().lower() != "windows" else "apktool.bat"
-
+    
     if os.path.exists(output_dir):
         print(f"\n⚠️  The directory \"{output_dir}\" already exists.")
         print("What would you like to do?")
@@ -868,18 +714,22 @@ def run_nuclei_against_apk():
         except FileNotFoundError as e:
             print(f"Error: {e}. Ensure apktool is installed and in your PATH.")
             return
-
+    
     # Determine the default template path based on the OS
-    user_home = os.path.expanduser("~")
-    android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
-    keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
+    if platform.system().lower() == "windows":
+        user_home = os.path.expanduser("~")
+        android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
+        keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
+    else:  # Assuming Linux or macOS
+        user_home = os.path.expanduser("~")
+        android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
+        keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
 
     # Template selection menu
     print("\nPlease choose which templates to use:")
     print("1. Android Templates")
     print("2. Keys Templates")
     print("3. Both (Android + Keys)")
-    print("4. Custom Template Path")
     template_choice = input("Enter the number of your choice: ").strip()
 
     # Process template choice
@@ -890,13 +740,6 @@ def run_nuclei_against_apk():
         templates_paths = [keys_template_path]
     elif template_choice == '3':
         templates_paths = [android_template_path, keys_template_path]
-    elif template_choice == '4':
-        custom_path = input("Enter the full path to your custom nuclei templates: ").strip()
-        if os.path.exists(custom_path):
-            templates_paths = [custom_path]
-        else:
-            print(f"Error: The path '{custom_path}' does not exist.")
-            return
     else:
         print("Invalid choice. Exiting.")
         return
@@ -909,7 +752,7 @@ def run_nuclei_against_apk():
 
     # Prepare nuclei command
     nuclei_command = ["nuclei", "-target", output_dir]
-
+    
     # Add template paths to the nuclei command
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
@@ -921,14 +764,14 @@ def run_nuclei_against_apk():
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to run nuclei. {e}")
         return
-
+    
     # Ask the user if they want to save the output
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
     if save_output in ['y', 'yes']:
         output_file = os.path.join(script_dir, f"{os.path.splitext(os.path.basename(output_dir))[0]}_nuclei_output.txt")
         with open(output_file, "w") as file:
             file.write(result.stdout)
-
+        
         print(f"Output saved to {output_file}")
 
     print("Analysis complete.")
@@ -940,24 +783,24 @@ def run_apkleaks():
         return
 
     apk_path = input("📝 Enter the path to the APK file: ").strip()
-
+    
     if not os.path.isfile(apk_path):
         print(Fore.RED + f"❌ Error: The file '{apk_path}' does not exist or is not a valid file." + Style.RESET_ALL)
         return
-
+    
     print(Fore.CYAN + f"\n🔍 Running apkleaks on '{apk_path}'..." + Style.RESET_ALL)
-
+    
     try:
         # Define the output filename
         output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_apkleaks_output.txt"
         output_path = os.path.join(os.getcwd(), output_filename)
-
+        
         # Run apkleaks with the -o flag to specify the output file
         command = ['apkleaks', '-f', apk_path, '-o', output_path]
         subprocess.run(command, check=True)
-
+        
         print(Fore.GREEN + f"✅ apkleaks has analyzed the APK and saved the output to '{output_path}'." + Style.RESET_ALL)
-
+    
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"❌ Error running apkleaks: {e}" + Style.RESET_ALL)
     except FileNotFoundError:

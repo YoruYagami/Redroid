@@ -50,11 +50,11 @@ def get_adb_command(emulator_type, emulator_installation_path):
     if emulator_type == 'Nox':
         adb_path = os.path.join(emulator_installation_path, 'nox_adb.exe')
         if os.path.exists(adb_path):
-            adb_command = f'"{adb_path}"'
+            adb_command = adb_path
     elif emulator_type == 'Genymotion':
         adb_path = os.path.join(emulator_installation_path, 'tools', 'adb.exe')
         if os.path.exists(adb_path):
-            adb_command = f'"{adb_path}"'
+            adb_command = adb_path
     elif emulator_type == 'AndroidStudio':
         # Try to find adb in the Android SDK platform-tools directory
         sdk_paths = [
@@ -72,7 +72,7 @@ def get_adb_command(emulator_type, emulator_installation_path):
 def is_adb_available(adb_command):
     """Check if ADB is installed and available."""
     try:
-        subprocess.run(f'{adb_command} version', shell=True, capture_output=True, text=True, check=True)
+        subprocess.run([adb_command, 'version'], capture_output=True, text=True, check=True)
         return True
     except FileNotFoundError:
         return False
@@ -125,9 +125,9 @@ def run_adb_command(command_list):
     if not device_serial:
         print(Fore.RED + "❗ No device selected. This command requires a connected device or emulator." + Style.RESET_ALL)
         return None
-    full_command = f'{adb_command} -s {device_serial} ' + ' '.join(command_list)
+    full_command = [adb_command, '-s', device_serial] + command_list
     try:
-        result = subprocess.run(full_command, shell=True, text=True, capture_output=True, check=True)
+        result = subprocess.run(full_command, text=True, capture_output=True, check=True)
         return result
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error running adb command: {e}" + Style.RESET_ALL)
@@ -141,7 +141,7 @@ def get_connected_devices():
         print(Fore.RED + "❗ 'adb' command is not available. Cannot list connected devices." + Style.RESET_ALL)
         return []
     try:
-        result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True, check=True)
+        result = subprocess.run([adb_command, 'devices'], capture_output=True, text=True, check=True)
         devices = []
         for line in result.stdout.strip().split('\n')[1:]:
             if line.strip() and 'device' in line:
@@ -196,19 +196,14 @@ else:
         if not device_serial:
             print(Fore.RED + "❗ No device selected. Cannot get emulator IP." + Style.RESET_ALL)
             return None
-        # Try using adb shell getprop
-        result = run_adb_command(['shell', 'getprop', 'dhcp.eth0.ipaddress'])
+        # Get all network interfaces and their IP addresses
+        result = run_adb_command(['shell', 'ip', '-f', 'inet', 'addr', 'show'])
         if result and result.stdout.strip():
-            ip_address = result.stdout.strip()
-            return ip_address
-        else:
-            # Try using 'adb shell ip addr show eth0'
-            result = run_adb_command(['shell', 'ip', '-f', 'inet', 'addr', 'show', 'eth0'])
-            if result and result.stdout.strip():
-                match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', result.stdout)
-                if match:
-                    ip_address = match.group(1)
-                    return ip_address
+            interfaces = re.findall(r'\d+: (\w+):.*\n\s+inet (\d+\.\d+\.\d+\.\d+)/\d+', result.stdout)
+            if interfaces:
+                for interface, ip_address in interfaces:
+                    if ip_address != '127.0.0.1':
+                        return ip_address
         print(Fore.RED + "❗ Could not get emulator IP address." + Style.RESET_ALL)
         return None
 
@@ -264,7 +259,7 @@ def open_adb_shell():
         return
     print("Opening ADB Shell. Type 'exit' to return to the main menu.")
     try:
-        subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
+        subprocess.run([adb_command, '-s', device_serial, 'shell'])
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error opening ADB shell: {e}" + Style.RESET_ALL)
 
@@ -608,7 +603,7 @@ def run_frida_server():
 
     print("Starting Frida Server in the background...")
 
-    command = [adb_command.strip('"'), '-s', device_serial, 'shell', '/data/local/tmp/frida-server']
+    command = [adb_command, '-s', device_serial, 'shell', '/data/local/tmp/frida-server']
     try:
         if platform.system().lower() == 'windows':
             subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)

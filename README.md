@@ -2,6 +2,8 @@
 
 Welcome to **Redroid**! Enhance your mobile security testing capabilities with this powerful toolset. Easily manage and use tools like Frida, Jadx, Apktool, Nuclei, Mob-FS docker Dynamic Analaysis enabled, and more, directly from a user-friendly command-line interface.
 
+> :warning: Compatibility with Android Studio is currently under development.
+
 ## 🛠️ Installation
 
 ### Prerequisites

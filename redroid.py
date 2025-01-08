@@ -331,21 +331,6 @@ def setup_apktool():
     except Exception as e:
         print(Fore.RED + f"❌ An error occurred while setting up Apktool: {str(e)}" + Style.RESET_ALL)
 
-def is_admin():
-    """Check if the script is running with administrative privileges."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
-        return False
-
-def add_to_system_path(path):
-    """Add a directory to the system PATH environment variable."""
-    try:
-        subprocess.run(f'setx /M PATH "%PATH%;{path}"', shell=True, check=True)
-        print(Fore.GREEN + f"✅ Added {path} to the system PATH." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Failed to add {path} to PATH: {e}" + Style.RESET_ALL)
-
 def check_nuclei_installed():
     """Check if Nuclei can be executed from the terminal."""
     try:
@@ -364,36 +349,16 @@ def check_go_installed():
 
 def install_nuclei():
     """Install Nuclei using Go and ensure it's executable from any terminal."""
-    if not check_go_installed():
-        print(Fore.RED + "❌ Go is not installed on your system. Please install Go and try again." + Style.RESET_ALL)
-        return
-    
     try:
         print("✅ Installing Nuclei...")
         subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
         print(Fore.GREEN + "✅ Nuclei installed successfully." + Style.RESET_ALL)
-    
-        if not check_nuclei_installed():
-            go_bin_path = os.path.expanduser("~\\go\\bin") if platform.system().lower() == "windows" else os.path.expanduser("~/go/bin")
-            add_to_system_path(go_bin_path)
-            
-            if not check_nuclei_installed():
-                print(Fore.YELLOW + "⚠️ Nuclei is still not executable. Attempting to add to PATH with administrative privileges..." + Style.RESET_ALL)
-                if is_admin():
-                    add_to_system_path(go_bin_path)
-                else:
-                    # Elevate to admin only for modifying the PATH
-                    print("🔄 Requesting administrative privileges to modify PATH...")
-                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
-                    return  # Exit after elevating to avoid re-running as admin
-            
-            if not check_nuclei_installed():
-                print(Fore.RED + "❌ Nuclei is still not executable. Please check your PATH settings manually." + Style.RESET_ALL)
-            else:
-                print(Fore.GREEN + "✅ Nuclei is now executable from the terminal." + Style.RESET_ALL)
+
+        if not shutil.which("nuclei"):
+            print(Fore.YELLOW + "⚠️ Nuclei is still not executable. Please ensure the installation directory is in your PATH." + Style.RESET_ALL)
         else:
-            print(Fore.GREEN + "✅ Nuclei is already executable from the terminal." + Style.RESET_ALL)
-    
+            print(Fore.GREEN + "✅ Nuclei is executable from the terminal." + Style.RESET_ALL)
+
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"❌ Error during Nuclei installation: {e}" + Style.RESET_ALL)
     except Exception as e:

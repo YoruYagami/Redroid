@@ -9,6 +9,7 @@ import lzma
 import sys
 import shlex
 import ctypes
+import time
 from platform import system
 
 # Attempt to import external libraries
@@ -435,7 +436,6 @@ def install_frida_server():
         print(Fore.RED + "❌ Frida Tools is not installed on this system. Please install Frida Tools first." + Style.RESET_ALL)
         return
 
-    import re
     version_match = re.search(r'(\d+\.\d+\.\d+)', frida_version_output)
     if not version_match:
         print(Fore.RED + "❌ Unable to determine Frida Tools version." + Style.RESET_ALL)

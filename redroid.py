@@ -789,10 +789,9 @@ def run_nuclei_against_apk():
 
     apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
     try:
-        subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True, capture_output=True, text=True)
+        subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Error: Failed to decompile APK. {e}\n")
-        print(f"Apktool Stderr: {e.stderr}")
         return
     except FileNotFoundError as e:
         print(f"\n❌ Error: {e}. Ensure apktool is installed and accessible.")
@@ -823,22 +822,20 @@ def run_nuclei_against_apk():
         if not os.path.exists(path):
             print(f"Templates directory not found at {path}.")
             return
-        if not os.listdir(path):
-             print(f"Warning: the template directory {path} is empty")
 
-    nuclei_command = ["nuclei", "-target", output_dir]  # Rimosso il comando -file definitivamente
+    nuclei_command = ["nuclei", "-target", output_dir, "-file"]
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
 
-    print("Nuclei command:", nuclei_command)
-    print("Template paths:", templates_paths)
+    print("Nuclei command:", nuclei_command)  # Debugging print
+    print("Template paths:", templates_paths) # Debugging print
 
     try:
         result = subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
         print(result.stdout)
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to run nuclei. {e}")
-        print(f"Stderr: {e.stderr}")
+        print(f"Stderr: {e.stderr}") # Print stderr for more details
         return
 
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
@@ -849,7 +846,6 @@ def run_nuclei_against_apk():
         print(f"Output saved to {output_file}")
 
     print("Analysis complete.")
-
 
 def is_go_installed():
     """Check if Go is installed."""

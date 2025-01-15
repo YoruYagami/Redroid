@@ -556,7 +556,7 @@ def run_ssl_pinning_bypass():
     list_installed_applications()
     app_package = input("📱 Enter the app package name to run the SSL pinning bypass on: ").strip()
     if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
         print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
         open_new_terminal(cmd)
     else:
@@ -577,7 +577,7 @@ def run_root_check_bypass():
     list_installed_applications()
     app_package = input("📱 Enter the app package name to run the Root Check Bypass on: ").strip()
     if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
         print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
         open_new_terminal(cmd)
     else:
@@ -598,7 +598,7 @@ def android_biometric_bypass():
     list_installed_applications()
     app_package = input("📱 Enter the app package name to run the Android Biometric Bypass on: ").strip()
     if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
         print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
         open_new_terminal(cmd)
     else:
@@ -653,7 +653,7 @@ def run_custom_frida_script():
     list_installed_applications()
     app_package = input(Fore.CYAN + "📱 Enter the app package name for the custom script: " + Style.RESET_ALL).strip()
     if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}" --no-pause'
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
         print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
         open_new_terminal(cmd)
     else:

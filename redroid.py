@@ -1087,7 +1087,7 @@ def main():
                     else:
                         print(Fore.RED + "❌ Invalid IP address or port number." + Style.RESET_ALL)
                 elif emulator_choice == '6':
-                    subprocess.run(f'{adb_command} -s {device_serial} shell settings delete global http_proxy', shell=True)
+                    subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy :0', shell=True)
                     print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
                 elif emulator_choice == '7':
                     break

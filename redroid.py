@@ -9,7 +9,10 @@ import lzma
 import sys
 import shlex
 import ctypes
+<<<<<<< HEAD
 from platform import system
+=======
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
 
 # Attempt to import external libraries
 try:
@@ -759,6 +762,7 @@ def run_mob_fs():
         print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
 
 def run_nuclei_against_apk():
+<<<<<<< HEAD
     """Decompiles an APK, runs nuclei with templates, and saves output optionally.
        Handles paths with single/double quotes and spaces.
     """
@@ -802,12 +806,65 @@ def run_nuclei_against_apk():
     android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
     keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
 
+=======
+    """Run nuclei against a specified APK file."""
+    apktool_command = "apktool" if platform.system().lower() != "windows" else "apktool.bat"
+    if not shutil.which(apktool_command):
+        print(Fore.RED + "❌ apktool is not installed or not in your PATH. Please install it first." + Style.RESET_ALL)
+        return
+    if not check_nuclei_installed():
+        print(Fore.RED + "❌ nuclei is not installed or not in your PATH. Please install it first." + Style.RESET_ALL)
+        return
+    apk_path = input("📝 Enter the path to the APK file: ").strip()
+    if not os.path.exists(apk_path):
+        print(Fore.RED + f"❌ The file {apk_path} does not exist." + Style.RESET_ALL)
+        return
+    script_dir = os.getcwd()
+    output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])
+    if os.path.exists(output_dir):
+        print(Fore.YELLOW + f"\n⚠️ The directory \"{output_dir}\" already exists." + Style.RESET_ALL)
+        print("What would you like to do?")
+        print("1. 🕵️ Scan using existing Apktool output")
+        print("2. 🔄 Overwrite with fresh decompilation")
+        action_choice = input("\nEnter your choice (1 or 2): ").strip()
+        if action_choice == '1':
+            print(Fore.GREEN + "\n✅ Proceeding with existing Apktool output...\n" + Style.RESET_ALL)
+        elif action_choice == '2':
+            try:
+                subprocess.run([apktool_command, "d", apk_path, "-o", output_dir, "-f"], check=True)
+                print(Fore.GREEN + "\n🔄 Apktool output overwritten with fresh decompilation.\n" + Style.RESET_ALL)
+            except subprocess.CalledProcessError as e:
+                print(Fore.RED + f"\n❌ Error: Failed to decompile APK. {e}\n" + Style.RESET_ALL)
+                return
+            except FileNotFoundError as e:
+                print(Fore.RED + f"\n❌ Error: {e}. Ensure apktool is installed and in your PATH.\n" + Style.RESET_ALL)
+                return
+        else:
+            print(Fore.RED + "\n❌ Invalid choice. Operation cancelled.\n" + Style.RESET_ALL)
+            return
+    else:
+        try:
+            subprocess.run([apktool_command, "d", apk_path, "-o", output_dir], check=True)
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Error: Failed to decompile APK. {e}" + Style.RESET_ALL)
+            return
+        except FileNotFoundError as e:
+            print(Fore.RED + f"❌ Error: {e}. Ensure apktool is installed and in your PATH." + Style.RESET_ALL)
+            return
+
+    user_home = os.path.expanduser("~")
+    android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
+    keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
     print("\nPlease choose which templates to use:")
     print("1. Android Templates")
     print("2. Keys Templates")
     print("3. Both (Android + Keys)")
     template_choice = input("Enter the number of your choice: ").strip()
+<<<<<<< HEAD
 
+=======
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
     templates_paths = []
     if template_choice == '1':
         templates_paths.append(android_template_path)
@@ -826,6 +883,7 @@ def run_nuclei_against_apk():
         if not os.listdir(path):
              print(f"Warning: the template directory {path} is empty")
 
+<<<<<<< HEAD
     nuclei_command = ["nuclei", "-target", output_dir]  # Rimosso il comando -file definitivamente
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
@@ -833,6 +891,11 @@ def run_nuclei_against_apk():
     print("Nuclei command:", nuclei_command)
     print("Template paths:", templates_paths)
 
+=======
+    nuclei_command = ["nuclei", "-target", output_dir]
+    for template_path in templates_paths:
+        nuclei_command.extend(["-t", template_path])
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
     try:
         result = subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
         print(result.stdout)
@@ -841,16 +904,26 @@ def run_nuclei_against_apk():
         print(f"Stderr: {e.stderr}")
         return
 
+<<<<<<< HEAD
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
+=======
+    save_output = input("💾 Do you want to save the output? (y/n): ").strip().lower()
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
     if save_output in ['y', 'yes']:
         output_file = os.path.join(script_dir, f"{os.path.splitext(os.path.basename(output_dir))[0]}_nuclei_output.txt")
         with open(output_file, "w") as file:
             file.write(result.stdout)
+<<<<<<< HEAD
         print(f"Output saved to {output_file}")
 
     print("Analysis complete.")
 
 
+=======
+        print(Fore.GREEN + f"✅ Output saved to {output_file}" + Style.RESET_ALL)
+    print(Fore.GREEN + "✅ Analysis complete." + Style.RESET_ALL)
+
+>>>>>>> 2ed41b2f1f97a307806ca2ade783da32574449ab
 def is_go_installed():
     """Check if Go is installed."""
     try:

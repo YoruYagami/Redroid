@@ -12,7 +12,7 @@ import ctypes
 import time
 from platform import system
 
-# Attempt to import external libraries
+# External libraries
 try:
     import psutil
     import requests
@@ -23,7 +23,7 @@ except ImportError as e:
     print(f"ImportError: {e}. Ensure all dependencies are installed and available.")
     sys.exit(1)
 
-# Initialize colorama (if ANSI colors are supported; on Android you may wish to disable these)
+# Initialize colorama
 init(autoreset=True)
 
 # Global variables
@@ -33,11 +33,10 @@ adb_command = None
 device_serial = None
 
 def detect_emulator():
-    """Detect whether Nox or Genymotion emulator is running.
+    """Detect whether Nox, Genymotion, or Android Studio emulator is running.
        When running on Android, this function is bypassed.
     """
     global emulator_type, emulator_installation_path
-    # If running on Android, disable desktop emulator detection.
     if 'ANDROID_ARGUMENT' in os.environ:
         print(Fore.YELLOW + "⚠️ Running on Android device; emulator detection is disabled." + Style.RESET_ALL)
         emulator_type = None
@@ -50,13 +49,18 @@ def detect_emulator():
             cmdline = process.info.get('cmdline', [])
             exe_path = process.info.get('exe', '')
             if not exe_path:
-                continue  # Skip if no executable path
+                continue
             if name and 'Nox.exe' in name:
                 emulator_type = 'Nox'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
             elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
                 emulator_type = 'Genymotion'
+                emulator_installation_path = os.path.dirname(exe_path)
+                break
+            # Check for Android Studio Emulator processes:
+            elif name and ("emulator" in name.lower() or "qemu-system" in name.lower()):
+                emulator_type = 'AndroidStudio'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -68,7 +72,6 @@ def get_adb_command(emulator_type, emulator_installation_path):
        On Android, return None.
     """
     if os.environ.get('ANDROID_ARGUMENT'):
-        # When running on an Android device, ADB is not used.
         return None
 
     if emulator_type == 'Nox':
@@ -78,7 +81,7 @@ def get_adb_command(emulator_type, emulator_installation_path):
             return f'"{adb_command_path}"'
         else:
             print(Fore.RED + f"❌ {adb_executable} not found in {emulator_installation_path}." + Style.RESET_ALL)
-            return 'adb'  # fallback to system adb
+            return 'adb'
     elif emulator_type == 'Genymotion':
         adb_executable = 'adb.exe'
         adb_command_path = os.path.join(emulator_installation_path, 'tools', adb_executable)
@@ -97,7 +100,6 @@ def get_connected_devices(adb_command):
     try:
         result = subprocess.run(f'{adb_command} devices', shell=True, capture_output=True, text=True, check=True)
         devices = []
-        # Skip the header line
         for line in result.stdout.strip().split('\n')[1:]:
             if line.strip():
                 device_serial = line.split()[0]
@@ -131,74 +133,104 @@ def get_local_ipv4_addresses():
     return ip_dict
 
 def try_download_certificate(ip, port):
-    """Attempt to download and install Burp Suite certificate from a given IP and port.
-       Instead of using OpenSSL to convert the certificate, simply download the file and rename it.
+    """Download the certificate from a given URL (using the provided IP and port)
+    and install it on the device via adb.
+
+    If the certificate file (renamed) already exists in the current directory,
+    skip the remote download and proceed directly to the push phase.
+
+    If pushing the certificate fails due to the filesystem being read-only,
+    the script automatically executes 'adb root' and 'adb remount' (waiting 5 seconds),
+    then retries. If the issue persists, the user is asked whether to reboot the device.
     """
-    cert_url = f"http://{ip}:{port}/cert"
     input_der_file = "cacert.der"
     output_file = "9a5ba575.0"
 
-    try:
-        response = requests.get(cert_url, timeout=10)
-        if response.status_code == 200:
-            with open(input_der_file, "wb") as certificate_file:
-                certificate_file.write(response.content)
-            print(Fore.GREEN + f"✅ Burp Suite certificate downloaded successfully from {cert_url}." + Style.RESET_ALL)
+    # Check if the certificate (already renamed) exists locally
+    if os.path.exists(output_file):
+        print(Fore.GREEN + f"✅ Found local certificate '{output_file}', skipping remote download." + Style.RESET_ALL)
+    else:
+        cert_url = f"http://{ip}:{port}/cert"
+        try:
+            response = requests.get(cert_url, timeout=10)
+            if response.status_code == 200:
+                with open(input_der_file, "wb") as certificate_file:
+                    certificate_file.write(response.content)
+                print(Fore.GREEN + f"✅ Certificate downloaded successfully from {cert_url}." + Style.RESET_ALL)
 
-            # Instead of converting using OpenSSL, simply rename the file
-            os.rename(input_der_file, output_file)
-            print(Fore.GREEN + f"✅ Renamed {input_der_file} to {output_file}." + Style.RESET_ALL)
-
-            # Push the certificate to the emulator via adb (desktop only)
-            result_root = run_adb_command('root')
-            if result_root is None:
-                print(Fore.RED + "❌ Failed to switch adb to root mode." + Style.RESET_ALL)
+                # Rename the file (no OpenSSL conversion is used)
+                os.rename(input_der_file, output_file)
+                print(Fore.GREEN + f"✅ Renamed {input_der_file} to {output_file}." + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"❌ Unable to download the certificate from {cert_url}. Status code: {response.status_code}" + Style.RESET_ALL)
                 return False
-
-            result_remount = run_adb_command('remount')
-            if result_remount is None:
-                print(Fore.RED + "❌ Failed to remount the /system partition as read-write." + Style.RESET_ALL)
-                return False
-
-            push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
-            if push_result is None:
-                print(Fore.RED + "❌ Failed to push the certificate to the system cacerts directory." + Style.RESET_ALL)
-                return False
-
-            chmod_result = run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_file}')
-            if chmod_result is None:
-                print(Fore.RED + "❌ Failed to set permissions on the certificate." + Style.RESET_ALL)
-                return False
-
-            print(Fore.GREEN + "✅ Burp Suite Certificate Installed Successfully in the emulator." + Style.RESET_ALL)
-            os.remove(output_file)
-            return True
-        else:
-            print(Fore.RED + f"❌ Unable to download the certificate from {cert_url}. Status code: {response.status_code}" + Style.RESET_ALL)
+        except ConnectionError:
+            print(Fore.RED + f"❌ Burp Suite is not running or the proxy is not available at {ip}:{port}." + Style.RESET_ALL)
+            return False
+        except Exception as e:
+            print(Fore.RED + f"❌ An unexpected error occurred during download: {str(e)}" + Style.RESET_ALL)
             return False
 
-    except ConnectionError:
-        print(Fore.RED + f"❌ Burp Suite is not running or the proxy server is not on {ip}:{port}." + Style.RESET_ALL)
+    # Attempt to push the certificate to the device
+    push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
+    if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
+        print(Fore.YELLOW + "⚠️ Error: File system is read-only. Retrying with adb root and remount." + Style.RESET_ALL)
+        # Execute adb root and wait
+        result_root = run_adb_command('root')
+        if result_root is None:
+            print(Fore.RED + "❌ Unable to obtain root privileges via adb." + Style.RESET_ALL)
+            return False
+        time.sleep(5)  # Wait 5 seconds
+        result_remount = run_adb_command('remount')
+        if result_remount is None:
+            print(Fore.RED + "❌ Unable to remount the partition as writable." + Style.RESET_ALL)
+            return False
+
+        # Retry pushing the certificate
+        push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
+        if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
+            print(Fore.RED + "❌ The partition is still read-only." + Style.RESET_ALL)
+            # Ask the user if they want to reboot the device
+            user_choice = input(Fore.YELLOW + "Would you like to reboot the device now? (y/n): " + Style.RESET_ALL).strip().lower()
+            if user_choice in ['y', 'yes']:
+                reboot_result = run_adb_command('reboot')
+                if reboot_result is None:
+                    print(Fore.RED + "❌ Failed to reboot the device. Please reboot manually." + Style.RESET_ALL)
+                else:
+                    print(Fore.GREEN + "✅ Device reboot initiated. Please try installing the certificate again after the device restarts." + Style.RESET_ALL)
+                return False
+            else:
+                print(Fore.RED + "❌ Certificate installation failed due to read-only partition." + Style.RESET_ALL)
+                return False
+
+    # Set permissions on the certificate
+    chmod_result = run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_file}')
+    if chmod_result is None:
+        print(Fore.RED + "❌ Failed to set permissions on the certificate." + Style.RESET_ALL)
         return False
+
+    print(Fore.GREEN + "✅ Burp Suite certificate installed successfully on the device." + Style.RESET_ALL)
+    # Remove the local file if it is no longer needed
+    try:
+        os.remove(output_file)
     except Exception as e:
-        print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
-        return False
+        print(Fore.YELLOW + f"⚠️ Unable to remove local file {output_file}: {str(e)}" + Style.RESET_ALL)
+    return True
 
 def install_burpsuite_certificate(port):
-    """Install Burp Suite certificate into the emulator."""
-    print(Fore.CYAN + "🔍 Attempting to download the Burp Suite certificate from localhost..." + Style.RESET_ALL)
-    if try_download_certificate('127.0.0.1', port):
-        print(Fore.GREEN + "✅ Successfully downloaded and installed the Burp Suite certificate from localhost." + Style.RESET_ALL)
+    """Install the Burp Suite certificate onto the device using
+    the provided IP and port.
+    """
+    ip = input(Fore.CYAN + "📝 Enter the IP (e.g., 127.0.0.1): " + Style.RESET_ALL).strip()
+    if not ip:
+        print(Fore.RED + "❌ Invalid IP." + Style.RESET_ALL)
         return
 
-    print(Fore.CYAN + "🔍 Checking other local IP addresses for Burp Suite certificate..." + Style.RESET_ALL)
-    ipv4_addresses = get_local_ipv4_addresses()
-    for ip in ipv4_addresses.values():
-        if ip != '127.0.0.1' and try_download_certificate(ip, port):
-            print(Fore.GREEN + f"✅ Successfully downloaded and installed the Burp Suite certificate from {ip}." + Style.RESET_ALL)
-            return
-
-    print(Fore.RED + "❌ Failed to download the Burp Suite certificate from any local IP address." + Style.RESET_ALL)
+    print(Fore.CYAN + f"🔍 Attempting to download the certificate from {ip}:{port}..." + Style.RESET_ALL)
+    if try_download_certificate(ip, port):
+        print(Fore.GREEN + "✅ Certificate installation completed." + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Certificate installation failed." + Style.RESET_ALL)
 
 def install_tool(tool):
     """Install a Python tool using pip."""
@@ -210,8 +242,8 @@ def install_tool(tool):
 
 def download_latest_jadx():
     """Download the latest version of Jadx based on the operating system."""
-    system = platform.system().lower()
-    if system == "linux":
+    system_name = platform.system().lower()
+    if system_name == "linux":
         if os.path.exists("/etc/debian_version"):
             print("Detected Debian-based system (e.g., Kali Linux)")
             os.system("sudo apt update && sudo apt install jadx -y")
@@ -222,7 +254,7 @@ def download_latest_jadx():
             print("Jadx installed successfully via pacman.")
         else:
             print("⚠️ Unsupported Linux distribution. Please install Jadx manually.")
-    elif system == "windows":
+    elif system_name == "windows":
         try:
             response = requests.get("https://api.github.com/repos/skylot/jadx/releases/latest")
             response.raise_for_status()
@@ -246,7 +278,7 @@ def download_latest_jadx():
         except Exception as e:
             print(Fore.RED + f"❌ An error occurred while trying to download Jadx: {str(e)}" + Style.RESET_ALL)
     else:
-        print(f"❌ Unsupported operating system: {system}. Please install Jadx manually.")
+        print(f"❌ Unsupported operating system: {system_name}. Please install Jadx manually.")
 
 def get_latest_apktool_url():
     """Retrieve the latest apktool.jar download URL from the official repository."""
@@ -266,8 +298,8 @@ def get_latest_apktool_url():
 def setup_apktool():
     """Set up apktool on the system."""
     try:
-        system = platform.system().lower()
-        if system == "linux":
+        system_name = platform.system().lower()
+        if system_name == "linux":
             distro_info = os.popen('cat /etc/*release').read().lower()
             if 'kali' in distro_info or 'debian' in distro_info or 'ubuntu' in distro_info:
                 os.system('sudo apt update && sudo apt install apktool -y')
@@ -277,7 +309,7 @@ def setup_apktool():
                 print("✅ Apktool installed successfully via pacman.")
             else:
                 print("⚠️ Unsupported Linux distribution. Please install Apktool manually.")
-        elif system == "windows":
+        elif system_name == "windows":
             bat_url = "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat"
             jar_url = get_latest_apktool_url()
             if not jar_url:
@@ -439,29 +471,24 @@ def run_mob_fs():
 
 def run_nuclei_against_apk():
     """Decompiles an APK, runs nuclei with templates, and saves output optionally.
-       Handles paths with single/double quotes and spaces.
+       Handles paths with quotes and spaces.
     """
-
     while True:
         apk_path_input = input("Enter the path to the APK file: ").strip()
         apk_path = apk_path_input.strip("'").strip('"')
-
         if os.path.exists(apk_path):
             break
         else:
-            print(f"Error: The file {apk_path_input} (or {apk_path} after quote removal) does not exist.")
+            print(f"Error: The file {apk_path_input} does not exist.")
 
     script_dir = os.getcwd()
     output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])
-
     if os.path.exists(output_dir):
         print(f"\n⚠️ The directory \"{output_dir}\" already exists.")
         print("What would you like to do?")
         print("1. Scan directly using the existing Apktool output")
         print("2. Overwrite the output with a fresh decompilation")
-
         action_choice = input("\nEnter your choice (1 or 2): ").strip()
-
         if action_choice not in ['1', '2']:
             print("\n❌ Invalid choice. Operation cancelled.\n")
             return
@@ -479,13 +506,11 @@ def run_nuclei_against_apk():
     user_home = os.path.expanduser("~")
     android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
     keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
-
     print("\nPlease choose which templates to use:")
     print("1. Android Templates")
     print("2. Keys Templates")
     print("3. Both (Android + Keys)")
     template_choice = input("Enter the number of your choice: ").strip()
-
     templates_paths = []
     if template_choice == '1':
         templates_paths.append(android_template_path)
@@ -505,16 +530,13 @@ def run_nuclei_against_apk():
     nuclei_command = ["nuclei", "-target", output_dir, "-file"]
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
-
-    print("Nuclei command:", nuclei_command)  # Debugging print
-    print("Template paths:", templates_paths) # Debugging print
-
+    print("Nuclei command:", nuclei_command)
     try:
         result = subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
         print(result.stdout)
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to run nuclei. {e}")
-        print(f"Stderr: {e.stderr}") # Print stderr for more details
+        print(f"Stderr: {e.stderr}")
         return
 
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
@@ -523,7 +545,6 @@ def run_nuclei_against_apk():
         with open(output_file, "w") as file:
             file.write(result.stdout)
         print(f"Output saved to {output_file}")
-
     print("Analysis complete.")
 
 def is_go_installed():
@@ -617,9 +638,7 @@ def is_frida_server_running():
     if adb_command is None or not device_serial:
         return False
     try:
-        # Run the pgrep command. pgrep returns non-zero if no match is found.
-        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server',
-                                  shell=True, capture_output=True, text=True)
+        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server', shell=True, capture_output=True, text=True)
         if result.stdout.strip():
             return True
         else:
@@ -629,12 +648,9 @@ def is_frida_server_running():
 
 def install_frida_server():
     """
-    Checks if Frida-Server is already running on the device.
-    If not running, downloads the Frida-Server binary matching the installed Frida version
-    and the device CPU architecture, then installs it on the device using:
-      adb root && sleep 2 && adb remount
-      adb push frida-server /data/local/tmp/
-      adb shell "chmod 755 /data/local/tmp/frida-server"
+    Check if Frida-Server is already running on the device.
+    If not, download the matching Frida-Server binary, decompress, push it to the device,
+    set the executable permission, and clean up.
     """
     global adb_command, device_serial
 
@@ -642,12 +658,10 @@ def install_frida_server():
         print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Frida-Server." + Style.RESET_ALL)
         return
 
-    # Initial check: if Frida-Server is already running, we skip installation.
     if is_frida_server_running():
         print(Fore.GREEN + "✅ Frida-Server is already running on the device." + Style.RESET_ALL)
         return
 
-    # Step 1: Get the installed Frida-Tools version.
     try:
         frida_version_output = subprocess.check_output("frida --version", shell=True, stderr=subprocess.STDOUT, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -661,7 +675,6 @@ def install_frida_server():
     frida_version = version_match.group(1)
     print(Fore.GREEN + f"✅ Frida-Tools Version: {frida_version}" + Style.RESET_ALL)
 
-    # Step 2: Get the device's CPU architecture.
     arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
     if arch_result and arch_result.stdout.strip():
         emulator_arch = arch_result.stdout.strip()
@@ -670,7 +683,6 @@ def install_frida_server():
         print(Fore.RED + "❌ Unable to determine device CPU architecture." + Style.RESET_ALL)
         return
 
-    # Step 3: Construct the download URL for the matching frida-server binary.
     frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
     print(Fore.CYAN + f"🔗 Downloading Frida-Server from: {frida_server_url}" + Style.RESET_ALL)
 
@@ -685,7 +697,6 @@ def install_frida_server():
         print(Fore.RED + f"❌ Failed to download Frida-Server: {e}" + Style.RESET_ALL)
         return
 
-    # Step 4: Decompress the downloaded file using lzma.
     try:
         with lzma.open("frida-server.xz") as compressed_file:
             with open("frida-server", "wb") as out_file:
@@ -696,11 +707,9 @@ def install_frida_server():
         print(Fore.RED + f"❌ Failed to decompress Frida-Server: {e}" + Style.RESET_ALL)
         return
 
-    # Step 5: Install Frida-Server on the device.
     try:
         print(Fore.CYAN + "🔧 Setting device to root mode and remounting system partition..." + Style.RESET_ALL)
         subprocess.run(f'{adb_command} -s {device_serial} root', shell=True, check=True)
-        # Use Python's sleep instead of an external sleep command.
         time.sleep(2)
         subprocess.run(f'{adb_command} -s {device_serial} remount', shell=True, check=True)
         print(Fore.GREEN + "✅ Device is in root mode and system partition is remounted." + Style.RESET_ALL)
@@ -716,7 +725,6 @@ def install_frida_server():
         print(Fore.RED + f"❌ Error during Frida-Server installation: {e}" + Style.RESET_ALL)
         return
 
-    # Optionally remove the local frida-server binary file if it's no longer needed.
     try:
         os.remove("frida-server")
     except Exception:
@@ -728,10 +736,8 @@ def run_frida_server():
     if adb_command is None or not device_serial:
         print(Fore.RED + "❌ ADB command cannot run: either not on desktop or no device selected." + Style.RESET_ALL)
         return
-
     command = f'shell "/data/local/tmp/frida-server &"'
     full_command = f'{adb_command} -s {device_serial} {command}'
-
     try:
         result = subprocess.run(full_command, shell=True, capture_output=True, check=True, text=True)
         if "Error binding to address" in result.stderr:
@@ -875,7 +881,7 @@ def run_custom_frida_script():
     else:
         print(Fore.RED + "❌ Invalid package name. Exiting." + Style.RESET_ALL)
 
-def install_mob_sf():
+def install_mob_sf_wrapper():
     """Install MobSF using Docker."""
     if shutil.which("docker"):
         print(Fore.CYAN + "🔄 Pulling the latest MobSF Docker image..." + Style.RESET_ALL)
@@ -888,9 +894,7 @@ def install_mob_sf():
         print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
 
 def show_main_menu():
-    """Display the main menu.
-       On Android, consider replacing with UI elements.
-    """
+    """Display the main menu."""
     print(Fore.CYAN + r"""
     __________       ________               .__    .___
     \______   \ ____ \______ \_______  ____ |__| __| _/
@@ -963,7 +967,6 @@ def main():
     """Main function to run the tool."""
     global emulator_type, emulator_installation_path, adb_command, device_serial
 
-    # Detect emulator (desktop only)
     emulator_type, emulator_installation_path = detect_emulator()
     if emulator_type:
         print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
@@ -990,13 +993,10 @@ def main():
             print(Fore.RED + "❌ Invalid choice. No device selected." + Style.RESET_ALL)
             device_serial = None
 
-    # Main loop. Replace with Android UI interactions as needed.
     while True:
         show_main_menu()
         main_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
-
         if main_choice == '1':
-            # Install Tools menu
             while True:
                 show_install_tools_menu()
                 tools_choice = input(Fore.CYAN + "🛠️ Enter your choice: " + Style.RESET_ALL).strip()
@@ -1021,7 +1021,6 @@ def main():
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
         elif main_choice == '2':
-            # Run Tools menu
             while True:
                 show_run_tools_menu()
                 run_tools_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
@@ -1036,14 +1035,13 @@ def main():
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
         elif main_choice == '3':
-            # Emulator Options menu
             while True:
                 show_emulator_options_menu()
                 emulator_choice = input(Fore.CYAN + "🕹️ Enter your choice: " + Style.RESET_ALL).strip()
                 if emulator_choice == '1':
                     remove_ads_and_bloatware()
                 elif emulator_choice == '2':
-                    port = input(Fore.CYAN + "📝 Enter the port Burp Suite is using: " + Style.RESET_ALL).strip()
+                    port = input(Fore.CYAN + "📝 Enter the Burp Suite port: " + Style.RESET_ALL).strip()
                     if port.isdigit():
                         install_burpsuite_certificate(int(port))
                     else:
@@ -1080,7 +1078,6 @@ def main():
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
         elif main_choice == '4':
-            # Frida Options menu
             while True:
                 show_frida_menu()
                 frida_choice = input(Fore.CYAN + "🕵️ Enter your choice: " + Style.RESET_ALL).strip()
@@ -1109,4 +1106,8 @@ def main():
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(Fore.RED + "\n\n❌ Graceful shutdown initiated. Goodbye! 🚪" + Style.RESET_ALL)
+        sys.exit(0)

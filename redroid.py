@@ -330,7 +330,7 @@ def install_nuclei():
         subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
         print(Fore.GREEN + "✅ Nuclei installed successfully." + Style.RESET_ALL)
         if not shutil.which("nuclei"):
-            print(Fore.YELLOW + "⚠️ Nuclei is not executable. Please ensure the installation directory is in your PATH." + Style.RESET_ALL)
+            print(Fore.YELLOW + "⚠️ Nuclei is not executable. Please ensure the Go bin directory is in your PATH." + Style.RESET_ALL)
         else:
             print(Fore.GREEN + "✅ Nuclei is executable from the terminal." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
@@ -338,328 +338,7 @@ def install_nuclei():
     except Exception as e:
         print(Fore.RED + f"❌ An unexpected error occurred during Nuclei installation: {str(e)}" + Style.RESET_ALL)
 
-def remove_ads_and_bloatware():
-    """Remove ads and bloatware from the emulator."""
-    if not emulator_type:
-        print(Fore.RED + "❗ No emulator detected. Please start an emulator and try again." + Style.RESET_ALL)
-        return
-    if not device_serial:
-        print(Fore.RED + "❗ No device selected. Please connect to an emulator and try again." + Style.RESET_ALL)
-        return
-    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
-    run_adb_command('root')
-    run_adb_command('remount')
-    bloatware_apps = [
-        'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
-        'Helper', 'LiveWallpapersPicker', 'PrintRecommendationService', 'PrintSpooler',
-        'WallpaperBackup', 'newAppNameEn'
-    ]
-    for app in bloatware_apps:
-        print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
-        run_adb_command(f'shell rm -rf /system/app/{app}')
-    print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
-    print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
-    run_adb_command("shell su -c 'setprop ctl.restart zygote'")
-    print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
-
-def is_apkleaks_installed():
-    """Check if apkleaks is installed."""
-    try:
-        subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def run_apkleaks():
-    """Run apkleaks on a specified APK file and automatically save the output."""
-    if not is_apkleaks_installed():
-        print(Fore.RED + "❌ apkleaks is not installed or not found in your PATH. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
-        return
-    apk_path = input("📝 Enter the path to the APK file: ").strip()
-    if not os.path.isfile(apk_path):
-        print(Fore.RED + f"❌ Error: The file '{apk_path}' does not exist or is not valid." + Style.RESET_ALL)
-        return
-    print(Fore.CYAN + f"\n🔍 Running apkleaks on '{apk_path}'..." + Style.RESET_ALL)
-    try:
-        output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_apkleaks_output.txt"
-        output_path = os.path.join(os.getcwd(), output_filename)
-        command = ['apkleaks', '-f', apk_path, '-o', output_path]
-        subprocess.run(command, check=True)
-        print(Fore.GREEN + f"✅ apkleaks output saved to '{output_path}'." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error running apkleaks: {e}" + Style.RESET_ALL)
-    except FileNotFoundError:
-        print(Fore.RED + "❌ apkleaks is not installed. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
-    except Exception as e:
-        print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
-
-def is_frida_server_running():
-    """Check if a Frida-Server process is currently running on the device."""
-    global adb_command, device_serial
-    if adb_command is None or not device_serial:
-        return False
-    try:
-        # Run the pgrep command. pgrep returns non-zero if no match is found.
-        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server',
-                                  shell=True, capture_output=True, text=True)
-        if result.stdout.strip():
-            return True
-        else:
-            return False
-    except Exception:
-        return False
-
-def install_frida_server():
-    """
-    Checks if Frida-Server is already running on the device.
-    If not running, downloads the Frida-Server binary matching the installed Frida version
-    and the device CPU architecture, then installs it on the device using:
-      adb root && sleep 2 && adb remount
-      adb push frida-server /data/local/tmp/
-      adb shell "chmod 755 /data/local/tmp/frida-server"
-    """
-    global adb_command, device_serial
-
-    if adb_command is None or not device_serial:
-        print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Frida-Server." + Style.RESET_ALL)
-        return
-
-    # Initial check: if Frida-Server is already running, we skip installation.
-    if is_frida_server_running():
-        print(Fore.GREEN + "✅ Frida-Server is already running on the device." + Style.RESET_ALL)
-        return
-
-    # Step 1: Get the installed Frida-Tools version.
-    try:
-        frida_version_output = subprocess.check_output("frida --version", shell=True, stderr=subprocess.STDOUT, text=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(Fore.RED + "❌ Frida Tools is not installed on this system. Please install Frida Tools first." + Style.RESET_ALL)
-        return
-
-    version_match = re.search(r'(\d+\.\d+\.\d+)', frida_version_output)
-    if not version_match:
-        print(Fore.RED + "❌ Unable to determine Frida Tools version." + Style.RESET_ALL)
-        return
-    frida_version = version_match.group(1)
-    print(Fore.GREEN + f"✅ Frida-Tools Version: {frida_version}" + Style.RESET_ALL)
-
-    # Step 2: Get the device's CPU architecture.
-    arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
-    if arch_result and arch_result.stdout.strip():
-        emulator_arch = arch_result.stdout.strip()
-        print(Fore.GREEN + f"✅ Device CPU Architecture: {emulator_arch}" + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Unable to determine device CPU architecture." + Style.RESET_ALL)
-        return
-
-    # Step 3: Construct the download URL for the matching frida-server binary.
-    frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
-    print(Fore.CYAN + f"🔗 Downloading Frida-Server from: {frida_server_url}" + Style.RESET_ALL)
-
-    try:
-        response = requests.get(frida_server_url, stream=True, timeout=15)
-        response.raise_for_status()
-        with open("frida-server.xz", "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        print(Fore.GREEN + "✅ Frida-Server downloaded successfully." + Style.RESET_ALL)
-    except Exception as e:
-        print(Fore.RED + f"❌ Failed to download Frida-Server: {e}" + Style.RESET_ALL)
-        return
-
-    # Step 4: Decompress the downloaded file using lzma.
-    try:
-        with lzma.open("frida-server.xz") as compressed_file:
-            with open("frida-server", "wb") as out_file:
-                shutil.copyfileobj(compressed_file, out_file)
-        os.remove("frida-server.xz")
-        print(Fore.GREEN + "✅ Frida-Server decompressed successfully." + Style.RESET_ALL)
-    except Exception as e:
-        print(Fore.RED + f"❌ Failed to decompress Frida-Server: {e}" + Style.RESET_ALL)
-        return
-
-    # Step 5: Install Frida-Server on the device.
-    try:
-        print(Fore.CYAN + "🔧 Setting device to root mode and remounting system partition..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} root', shell=True, check=True)
-        # Use Python's sleep instead of an external sleep command.
-        time.sleep(2)
-        subprocess.run(f'{adb_command} -s {device_serial} remount', shell=True, check=True)
-        print(Fore.GREEN + "✅ Device is in root mode and system partition is remounted." + Style.RESET_ALL)
-
-        print(Fore.CYAN + "📦 Pushing Frida-Server to /data/local/tmp/..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} push frida-server /data/local/tmp/', shell=True, check=True)
-        print(Fore.GREEN + "✅ Frida-Server pushed successfully." + Style.RESET_ALL)
-
-        print(Fore.CYAN + "🔧 Setting executable permissions on Frida-Server..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} shell "chmod 755 /data/local/tmp/frida-server"', shell=True, check=True)
-        print(Fore.GREEN + "✅ Permissions set: Frida-Server is ready." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error during Frida-Server installation: {e}" + Style.RESET_ALL)
-        return
-
-    # Optionally remove the local frida-server binary file if it's no longer needed.
-    try:
-        os.remove("frida-server")
-    except Exception:
-        pass
-
-def run_frida_server():
-    """Start Frida-Server without pre-checks and ignore bind errors if port is in use."""
-    global adb_command, device_serial
-    if adb_command is None or not device_serial:
-        print(Fore.RED + "❌ ADB command cannot run: either not on desktop or no device selected." + Style.RESET_ALL)
-        return
-
-    command = f'shell "/data/local/tmp/frida-server &"'
-    full_command = f'{adb_command} -s {device_serial} {command}'
-
-    try:
-        result = subprocess.run(full_command, shell=True, capture_output=True, check=True, text=True)
-        if "Error binding to address" in result.stderr:
-            print(Fore.YELLOW + result.stderr.strip() + Style.RESET_ALL)
-        print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Failed to start Frida-Server: {e}" + Style.RESET_ALL)
-
-
-
-def list_installed_applications():
-    """List installed applications on the emulator using Frida."""
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot list applications." + Style.RESET_ALL)
-            return
-    print(Fore.CYAN + "📜 Listing installed applications on the emulator..." + Style.RESET_ALL)
-    try:
-        result = subprocess.run(['frida-ps', '-Uai'], capture_output=True, text=True, check=True)
-        print(Fore.GREEN + result.stdout + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error listing applications: {e}" + Style.RESET_ALL)
-    except FileNotFoundError:
-        print(Fore.RED + "❌ Frida is not installed or not found in your PATH. Please install Frida." + Style.RESET_ALL)
-
-def run_ssl_pinning_bypass():
-    """Run SSL Pinning Bypass using Frida."""
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with SSL Pinning Bypass." + Style.RESET_ALL)
-            return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the SSL pinning bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
-
-def run_root_check_bypass():
-    """Run Root Check Bypass using Frida."""
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Root Check Bypass." + Style.RESET_ALL)
-            return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the Root Check Bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
-
-def android_biometric_bypass():
-    """Run Android Biometric Bypass using Frida."""
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'android-biometric-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Android Biometric Bypass." + Style.RESET_ALL)
-            return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the Android Biometric Bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
-
-def run_custom_frida_script():
-    """Run a custom Frida script provided by the user."""
-    frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
-    known_scripts = {
-        'ssl-pinning-bypass.js',
-        'root-check-bypass.js',
-        'android-biometric-bypass.js'
-    }
-    if not os.path.exists(frida_scripts_dir):
-        print(Fore.RED + f"❌ 'frida-scripts' directory does not exist at {frida_scripts_dir}." + Style.RESET_ALL)
-        return
-
-    all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
-    unknown_scripts = all_scripts - known_scripts
-    script_path = None
-
-    if unknown_scripts:
-        print(Fore.CYAN + "\n🔍 Detected custom scripts in 'frida-scripts':" + Style.RESET_ALL)
-        unknown_scripts_list = list(unknown_scripts)
-        for idx, script in enumerate(unknown_scripts_list, 1):
-            print(f"{Fore.YELLOW}{idx}. {script}{Style.RESET_ALL}")
-        use_existing = input(Fore.CYAN + "✨ Execute one of these custom scripts? (y/n): " + Style.RESET_ALL).strip().lower()
-        if use_existing in ['y', 'yes']:
-            script_choice = input(f"🎯 Enter the number (1-{len(unknown_scripts_list)}): ").strip()
-            if script_choice.isdigit() and 1 <= int(script_choice) <= len(unknown_scripts_list):
-                script_path = os.path.join(frida_scripts_dir, unknown_scripts_list[int(script_choice) - 1])
-            else:
-                print(Fore.RED + "❌ Invalid choice. Exiting." + Style.RESET_ALL)
-                return
-        else:
-            print(Fore.YELLOW + "⚠️ It is recommended to place your custom script in 'frida-scripts'." + Style.RESET_ALL)
-            script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
-    else:
-        print(Fore.YELLOW + "⚠️ No custom scripts detected in 'frida-scripts'." + Style.RESET_ALL)
-        print(Fore.YELLOW + "⚠️ It is recommended to place your script in 'frida-scripts'." + Style.RESET_ALL)
-        script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
-
-    if not os.path.isfile(script_path):
-        print(Fore.RED + f"❌ The script '{script_path}' does not exist or is invalid." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with the custom script." + Style.RESET_ALL)
-            return
-    list_installed_applications()
-    app_package = input(Fore.CYAN + "📱 Enter the app package name for the custom script: " + Style.RESET_ALL).strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Exiting." + Style.RESET_ALL)
-
-def install_mob_fs():
+def install_mob_sf():
     """Install MobSF using Docker."""
     if shutil.which("docker"):
         print(Fore.CYAN + "🔄 Pulling the latest MobSF Docker image..." + Style.RESET_ALL)
@@ -865,18 +544,9 @@ def install_nuclei_wrapper():
         subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
         print(Fore.GREEN + "✅ Nuclei installed successfully." + Style.RESET_ALL)
         if not check_nuclei_installed():
-            go_bin_path = os.path.expanduser("~\\go\\bin") if platform.system().lower() == "windows" else os.path.expanduser("~/go/bin")
-            add_to_system_path(go_bin_path)
+            print(Fore.YELLOW + "⚠️ Nuclei is not executable. Please ensure the Go bin directory is added to your PATH manually." + Style.RESET_ALL)
             if not check_nuclei_installed():
-                print(Fore.YELLOW + "⚠️ Nuclei is still not executable. Attempting to add to PATH with administrative privileges..." + Style.RESET_ALL)
-                if is_admin():
-                    add_to_system_path(go_bin_path)
-                else:
-                    print("🔄 Requesting administrative privileges...")
-                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, __file__, None, 1)
-                    return
-            if not check_nuclei_installed():
-                print(Fore.RED + "❌ Nuclei is still not executable. Please check your PATH settings manually." + Style.RESET_ALL)
+                print(Fore.RED + "❌ Nuclei is still not executable. Please check your PATH settings." + Style.RESET_ALL)
             else:
                 print(Fore.GREEN + "✅ Nuclei is now executable from the terminal." + Style.RESET_ALL)
         else:
@@ -886,20 +556,336 @@ def install_nuclei_wrapper():
     except Exception as e:
         print(Fore.RED + f"❌ An unexpected error occurred during Nuclei installation: {str(e)}" + Style.RESET_ALL)
 
-def add_to_system_path(new_path):
-    """Stub for adding a directory to system PATH.
-       Implementation will vary by OS and permissions.
-    """
-    print(Fore.YELLOW + f"Attempting to add {new_path} to system PATH..." + Style.RESET_ALL)
-    # Placeholder – actual implementation depends on OS.
-    pass
+def remove_ads_and_bloatware():
+    """Remove ads and bloatware from the emulator."""
+    if not emulator_type:
+        print(Fore.RED + "❗ No emulator detected. Please start an emulator and try again." + Style.RESET_ALL)
+        return
+    if not device_serial:
+        print(Fore.RED + "❗ No device selected. Please connect to an emulator and try again." + Style.RESET_ALL)
+        return
+    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
+    run_adb_command('root')
+    run_adb_command('remount')
+    bloatware_apps = [
+        'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
+        'Helper', 'LiveWallpapersPicker', 'PrintRecommendationService', 'PrintSpooler',
+        'WallpaperBackup', 'newAppNameEn'
+    ]
+    for app in bloatware_apps:
+        print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
+        run_adb_command(f'shell rm -rf /system/app/{app}')
+    print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
+    print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
+    run_adb_command("shell su -c 'setprop ctl.restart zygote'")
+    print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
 
-def is_admin():
-    """Check if the script is running with administrative privileges."""
+def is_apkleaks_installed():
+    """Check if apkleaks is installed."""
     try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
+        subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def run_apkleaks():
+    """Run apkleaks on a specified APK file and automatically save the output."""
+    if not is_apkleaks_installed():
+        print(Fore.RED + "❌ apkleaks is not installed or not found in your PATH. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
+        return
+    apk_path = input("📝 Enter the path to the APK file: ").strip()
+    if not os.path.isfile(apk_path):
+        print(Fore.RED + f"❌ Error: The file '{apk_path}' does not exist or is not valid." + Style.RESET_ALL)
+        return
+    print(Fore.CYAN + f"\n🔍 Running apkleaks on '{apk_path}'..." + Style.RESET_ALL)
+    try:
+        output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_apkleaks_output.txt"
+        output_path = os.path.join(os.getcwd(), output_filename)
+        command = ['apkleaks', '-f', apk_path, '-o', output_path]
+        subprocess.run(command, check=True)
+        print(Fore.GREEN + f"✅ apkleaks output saved to '{output_path}'." + Style.RESET_ALL)
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error running apkleaks: {e}" + Style.RESET_ALL)
+    except FileNotFoundError:
+        print(Fore.RED + "❌ apkleaks is not installed. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
+
+def is_frida_server_running():
+    """Check if a Frida-Server process is currently running on the device."""
+    global adb_command, device_serial
+    if adb_command is None or not device_serial:
+        return False
+    try:
+        # Run the pgrep command. pgrep returns non-zero if no match is found.
+        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server',
+                                  shell=True, capture_output=True, text=True)
+        if result.stdout.strip():
+            return True
+        else:
+            return False
     except Exception:
         return False
+
+def install_frida_server():
+    """
+    Checks if Frida-Server is already running on the device.
+    If not running, downloads the Frida-Server binary matching the installed Frida version
+    and the device CPU architecture, then installs it on the device using:
+      adb root && sleep 2 && adb remount
+      adb push frida-server /data/local/tmp/
+      adb shell "chmod 755 /data/local/tmp/frida-server"
+    """
+    global adb_command, device_serial
+
+    if adb_command is None or not device_serial:
+        print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Frida-Server." + Style.RESET_ALL)
+        return
+
+    # Initial check: if Frida-Server is already running, we skip installation.
+    if is_frida_server_running():
+        print(Fore.GREEN + "✅ Frida-Server is already running on the device." + Style.RESET_ALL)
+        return
+
+    # Step 1: Get the installed Frida-Tools version.
+    try:
+        frida_version_output = subprocess.check_output("frida --version", shell=True, stderr=subprocess.STDOUT, text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(Fore.RED + "❌ Frida Tools is not installed on this system. Please install Frida Tools first." + Style.RESET_ALL)
+        return
+
+    version_match = re.search(r'(\d+\.\d+\.\d+)', frida_version_output)
+    if not version_match:
+        print(Fore.RED + "❌ Unable to determine Frida Tools version." + Style.RESET_ALL)
+        return
+    frida_version = version_match.group(1)
+    print(Fore.GREEN + f"✅ Frida-Tools Version: {frida_version}" + Style.RESET_ALL)
+
+    # Step 2: Get the device's CPU architecture.
+    arch_result = run_adb_command('shell getprop ro.product.cpu.abi')
+    if arch_result and arch_result.stdout.strip():
+        emulator_arch = arch_result.stdout.strip()
+        print(Fore.GREEN + f"✅ Device CPU Architecture: {emulator_arch}" + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Unable to determine device CPU architecture." + Style.RESET_ALL)
+        return
+
+    # Step 3: Construct the download URL for the matching frida-server binary.
+    frida_server_url = f"https://github.com/frida/frida/releases/download/{frida_version}/frida-server-{frida_version}-android-{emulator_arch}.xz"
+    print(Fore.CYAN + f"🔗 Downloading Frida-Server from: {frida_server_url}" + Style.RESET_ALL)
+
+    try:
+        response = requests.get(frida_server_url, stream=True, timeout=15)
+        response.raise_for_status()
+        with open("frida-server.xz", "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        print(Fore.GREEN + "✅ Frida-Server downloaded successfully." + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"❌ Failed to download Frida-Server: {e}" + Style.RESET_ALL)
+        return
+
+    # Step 4: Decompress the downloaded file using lzma.
+    try:
+        with lzma.open("frida-server.xz") as compressed_file:
+            with open("frida-server", "wb") as out_file:
+                shutil.copyfileobj(compressed_file, out_file)
+        os.remove("frida-server.xz")
+        print(Fore.GREEN + "✅ Frida-Server decompressed successfully." + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"❌ Failed to decompress Frida-Server: {e}" + Style.RESET_ALL)
+        return
+
+    # Step 5: Install Frida-Server on the device.
+    try:
+        print(Fore.CYAN + "🔧 Setting device to root mode and remounting system partition..." + Style.RESET_ALL)
+        subprocess.run(f'{adb_command} -s {device_serial} root', shell=True, check=True)
+        # Use Python's sleep instead of an external sleep command.
+        time.sleep(2)
+        subprocess.run(f'{adb_command} -s {device_serial} remount', shell=True, check=True)
+        print(Fore.GREEN + "✅ Device is in root mode and system partition is remounted." + Style.RESET_ALL)
+
+        print(Fore.CYAN + "📦 Pushing Frida-Server to /data/local/tmp/..." + Style.RESET_ALL)
+        subprocess.run(f'{adb_command} -s {device_serial} push frida-server /data/local/tmp/', shell=True, check=True)
+        print(Fore.GREEN + "✅ Frida-Server pushed successfully." + Style.RESET_ALL)
+
+        print(Fore.CYAN + "🔧 Setting executable permissions on Frida-Server..." + Style.RESET_ALL)
+        subprocess.run(f'{adb_command} -s {device_serial} shell "chmod 755 /data/local/tmp/frida-server"', shell=True, check=True)
+        print(Fore.GREEN + "✅ Permissions set: Frida-Server is ready." + Style.RESET_ALL)
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error during Frida-Server installation: {e}" + Style.RESET_ALL)
+        return
+
+    # Optionally remove the local frida-server binary file if it's no longer needed.
+    try:
+        os.remove("frida-server")
+    except Exception:
+        pass
+
+def run_frida_server():
+    """Start Frida-Server without pre-checks and ignore bind errors if port is in use."""
+    global adb_command, device_serial
+    if adb_command is None or not device_serial:
+        print(Fore.RED + "❌ ADB command cannot run: either not on desktop or no device selected." + Style.RESET_ALL)
+        return
+
+    command = f'shell "/data/local/tmp/frida-server &"'
+    full_command = f'{adb_command} -s {device_serial} {command}'
+
+    try:
+        result = subprocess.run(full_command, shell=True, capture_output=True, check=True, text=True)
+        if "Error binding to address" in result.stderr:
+            print(Fore.YELLOW + result.stderr.strip() + Style.RESET_ALL)
+        print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Failed to start Frida-Server: {e}" + Style.RESET_ALL)
+
+def list_installed_applications():
+    """List installed applications on the emulator using Frida."""
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot list applications." + Style.RESET_ALL)
+            return
+    print(Fore.CYAN + "📜 Listing installed applications on the emulator..." + Style.RESET_ALL)
+    try:
+        result = subprocess.run(['frida-ps', '-Uai'], capture_output=True, text=True, check=True)
+        print(Fore.GREEN + result.stdout + Style.RESET_ALL)
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error listing applications: {e}" + Style.RESET_ALL)
+    except FileNotFoundError:
+        print(Fore.RED + "❌ Frida is not installed or not found in your PATH. Please install Frida." + Style.RESET_ALL)
+
+def run_ssl_pinning_bypass():
+    """Run SSL Pinning Bypass using Frida."""
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
+    if not os.path.exists(script_path):
+        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
+        return
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with SSL Pinning Bypass." + Style.RESET_ALL)
+            return
+    list_installed_applications()
+    app_package = input("📱 Enter the app package name to run the SSL pinning bypass on: ").strip()
+    if app_package:
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
+        print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
+        open_new_terminal(cmd)
+    else:
+        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+
+def run_root_check_bypass():
+    """Run Root Check Bypass using Frida."""
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
+    if not os.path.exists(script_path):
+        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
+        return
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Root Check Bypass." + Style.RESET_ALL)
+            return
+    list_installed_applications()
+    app_package = input("📱 Enter the app package name to run the Root Check Bypass on: ").strip()
+    if app_package:
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
+        print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
+        open_new_terminal(cmd)
+    else:
+        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+
+def android_biometric_bypass():
+    """Run Android Biometric Bypass using Frida."""
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'android-biometric-bypass.js')
+    if not os.path.exists(script_path):
+        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
+        return
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Android Biometric Bypass." + Style.RESET_ALL)
+            return
+    list_installed_applications()
+    app_package = input("📱 Enter the app package name to run the Android Biometric Bypass on: ").strip()
+    if app_package:
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
+        print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
+        open_new_terminal(cmd)
+    else:
+        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+
+def run_custom_frida_script():
+    """Run a custom Frida script provided by the user."""
+    frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
+    known_scripts = {
+        'ssl-pinning-bypass.js',
+        'root-check-bypass.js',
+        'android-biometric-bypass.js'
+    }
+    if not os.path.exists(frida_scripts_dir):
+        print(Fore.RED + f"❌ 'frida-scripts' directory does not exist at {frida_scripts_dir}." + Style.RESET_ALL)
+        return
+
+    all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
+    unknown_scripts = all_scripts - known_scripts
+    script_path = None
+
+    if unknown_scripts:
+        print(Fore.CYAN + "\n🔍 Detected custom scripts in 'frida-scripts':" + Style.RESET_ALL)
+        unknown_scripts_list = list(unknown_scripts)
+        for idx, script in enumerate(unknown_scripts_list, 1):
+            print(f"{Fore.YELLOW}{idx}. {script}{Style.RESET_ALL}")
+        use_existing = input(Fore.CYAN + "✨ Execute one of these custom scripts? (y/n): " + Style.RESET_ALL).strip().lower()
+        if use_existing in ['y', 'yes']:
+            script_choice = input(f"🎯 Enter the number (1-{len(unknown_scripts_list)}): ").strip()
+            if script_choice.isdigit() and 1 <= int(script_choice) <= len(unknown_scripts_list):
+                script_path = os.path.join(frida_scripts_dir, unknown_scripts_list[int(script_choice) - 1])
+            else:
+                print(Fore.RED + "❌ Invalid choice. Exiting." + Style.RESET_ALL)
+                return
+        else:
+            print(Fore.YELLOW + "⚠️ It is recommended to place your custom script in 'frida-scripts'." + Style.RESET_ALL)
+            script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
+    else:
+        print(Fore.YELLOW + "⚠️ No custom scripts detected in 'frida-scripts'." + Style.RESET_ALL)
+        print(Fore.YELLOW + "⚠️ It is recommended to place your script in 'frida-scripts'." + Style.RESET_ALL)
+        script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
+
+    if not os.path.isfile(script_path):
+        print(Fore.RED + f"❌ The script '{script_path}' does not exist or is invalid." + Style.RESET_ALL)
+        return
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with the custom script." + Style.RESET_ALL)
+            return
+    list_installed_applications()
+    app_package = input(Fore.CYAN + "📱 Enter the app package name for the custom script: " + Style.RESET_ALL).strip()
+    if app_package:
+        cmd = f'frida -U -f {app_package} -l "{script_path}"'
+        print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
+        open_new_terminal(cmd)
+    else:
+        print(Fore.RED + "❌ Invalid package name. Exiting." + Style.RESET_ALL)
+
+def install_mob_sf():
+    """Install MobSF using Docker."""
+    if shutil.which("docker"):
+        print(Fore.CYAN + "🔄 Pulling the latest MobSF Docker image..." + Style.RESET_ALL)
+        try:
+            subprocess.run("docker pull opensecurity/mobile-security-framework-mobsf:latest", shell=True, check=True)
+            print(Fore.GREEN + "✅ MobSF Docker image pulled successfully." + Style.RESET_ALL)
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Failed to pull MobSF Docker image: {e}" + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
 
 def show_main_menu():
     """Display the main menu.
@@ -1027,7 +1013,7 @@ def main():
                 elif tools_choice == '6':
                     install_nuclei()
                 elif tools_choice == '7':
-                    install_mob_fs()
+                    install_mob_sf()
                 elif tools_choice == '8':
                     install_tool("apkleaks")
                 elif tools_choice == '9':

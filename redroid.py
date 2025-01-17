@@ -893,6 +893,162 @@ def install_mob_sf_wrapper():
     else:
         print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
 
+def install_drozer_agent():
+    """
+    Download the latest Drozer Agent APK from GitHub and install it automatically
+    on the connected emulator/device via adb.
+    """
+    global adb_command, device_serial
+    if adb_command is None or not device_serial:
+        print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Drozer Agent." + Style.RESET_ALL)
+        return
+
+    # Retrieve the latest release info from GitHub
+    print(Fore.CYAN + "🔎 Checking latest Drozer Agent release..." + Style.RESET_ALL)
+    # We'll fetch from the official GitHub repo:
+    # https://api.github.com/repos/WithSecureLabs/drozer-agent/releases/latest
+    # Then parse the .apk asset.
+    try:
+        response = requests.get("https://api.github.com/repos/WithSecureLabs/drozer-agent/releases/latest", timeout=15)
+        response.raise_for_status()
+        release_data = response.json()
+        assets = release_data.get("assets", [])
+        apk_url = None
+
+        # Find an asset that looks like an .apk
+        for asset in assets:
+            if asset["browser_download_url"].endswith(".apk"):
+                apk_url = asset["browser_download_url"]
+                break
+
+        if not apk_url:
+            print(Fore.RED + "❌ Could not find an .apk asset in the latest Drozer release." + Style.RESET_ALL)
+            return
+
+        print(Fore.CYAN + f"🔗 Downloading Drozer Agent from: {apk_url}" + Style.RESET_ALL)
+        apk_filename = "drozer-agent-latest.apk"
+        with requests.get(apk_url, stream=True) as r:
+            r.raise_for_status()
+            with open(apk_filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        print(Fore.GREEN + "✅ Drozer Agent APK downloaded successfully." + Style.RESET_ALL)
+
+        # Now install the APK using adb
+        install_command = f'install -r "{apk_filename}"'
+        print(Fore.CYAN + "📦 Installing Drozer Agent APK on the device..." + Style.RESET_ALL)
+        result = run_adb_command(install_command)
+        if result and result.returncode == 0:
+            print(Fore.GREEN + "✅ Drozer Agent installed successfully." + Style.RESET_ALL)
+        else:
+            print(Fore.RED + "❌ Installation failed. Check adb logs for details." + Style.RESET_ALL)
+
+        # Cleanup local file if desired
+        try:
+            os.remove(apk_filename)
+        except Exception:
+            pass
+
+    except Exception as e:
+        print(Fore.RED + f"❌ An error occurred while downloading or installing Drozer Agent: {e}" + Style.RESET_ALL)
+
+def start_drozer_forwarding():
+    """
+    Forward port 31415 on the local machine to port 31415 on the device/emulator
+    (i.e., adb forward tcp:31415 tcp:31415).
+    """
+    global adb_command, device_serial
+    if adb_command is None or not device_serial:
+        print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot forward Drozer port." + Style.RESET_ALL)
+        return
+
+    # Perform the forwarding
+    result = run_adb_command("forward tcp:31415 tcp:31415")
+    if result and result.returncode == 0:
+        print(Fore.GREEN + "✅ ADB forward set up: 31415 -> 31415" + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Failed to set up port forwarding. Check adb logs for details." + Style.RESET_ALL)
+
+
+def show_drozer_menu():
+    """Display the Drozer menu."""
+    print("\n" + "=" * 50)
+    print(f"{'Drozer':^50}")
+    print("=" * 50)
+    print("1. 🏹  Install Drozer Agent")
+    print("2. 🚀  Start port forwarding (31415 -> 31415)")
+    print("3. ↩️  Back")
+
+def drozer_menu_loop():
+    """Loop for the Drozer menu."""
+    while True:
+        show_drozer_menu()
+        choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
+        if choice == '1':
+            install_drozer_agent()
+        elif choice == '2':
+            start_drozer_forwarding()
+        elif choice == '3':
+            break
+        else:
+            print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+
+def list_and_run_android_studio_emulators():
+    """
+    Lists all available Android Studio emulators (AVDs) and prompts
+    the user to select one to run in a new terminal with:
+      emulator -avd <AVD> -no-snapshot -writable-system [extra_flags_if_any]
+    """
+    # Run "emulator -list-avds" and parse output
+    try:
+        result = subprocess.run(["emulator", "-list-avds"], capture_output=True, text=True, check=True)
+    except FileNotFoundError:
+        print(Fore.RED + "❌ 'emulator' command not found. Please ensure Android SDK is installed and in your PATH." + Style.RESET_ALL)
+        return
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error running 'emulator -list-avds': {e}" + Style.RESET_ALL)
+        return
+
+    avds_output = result.stdout.strip().splitlines()
+    if not avds_output:
+        print(Fore.YELLOW + "⚠️ No AVDs found. Create an AVD from the Android Studio AVD Manager first." + Style.RESET_ALL)
+        return
+
+    # Display the list of AVDs
+    print(Fore.CYAN + "\nAvailable AVDs:" + Style.RESET_ALL)
+    for idx, avd in enumerate(avds_output, start=1):
+        print(f"{idx}. {avd}")
+
+    # Ask the user which AVD they want to run
+    user_choice = input(Fore.CYAN + "\nEnter the number of the AVD to run: " + Style.RESET_ALL).strip()
+    if not user_choice.isdigit() or not (1 <= int(user_choice) <= len(avds_output)):
+        print(Fore.RED + "❌ Invalid choice. Operation cancelled." + Style.RESET_ALL)
+        return
+
+    # Get the chosen AVD name
+    chosen_avd = avds_output[int(user_choice) - 1]
+    print(Fore.GREEN + f"✅ Chosen AVD: {chosen_avd}" + Style.RESET_ALL)
+
+    # Ask the user for additional flags
+    extra_flags = input(
+        Fore.CYAN
+        + "Enter any additional emulator flags (or press ENTER to skip), e.g. '-netdelay none -netspeed full': "
+        + Style.RESET_ALL
+    ).strip()
+
+    # Construct the base command
+    base_cmd = f'emulator -avd "{chosen_avd}" -no-snapshot -writable-system'
+
+    # If user typed anything, append to the command
+    if extra_flags:
+        base_cmd += f" {extra_flags}"
+
+    print(Fore.YELLOW + f"\nLaunching emulator with:\n{base_cmd}" + Style.RESET_ALL)
+
+    # Open in a new terminal
+    open_new_terminal(base_cmd)
+
+
 def show_main_menu():
     """Display the main menu."""
     print(Fore.CYAN + r"""
@@ -909,7 +1065,8 @@ def show_main_menu():
     print("2. 🚀  Run Tools")
     print("3. 🎮  Emulator Options")
     print("4. 🕵️  Frida")
-    print("5. ❌  Exit")
+    print("5. 🏹  Drozer")
+    print("6. ❌  Exit")
 
 def show_install_tools_menu():
     """Display the Install Tools submenu."""
@@ -1047,10 +1204,10 @@ def main():
                     else:
                         print(Fore.RED + "❌ Invalid port. Enter a valid port number." + Style.RESET_ALL)
                 elif emulator_choice == '3':
-                    if adb_command:
+                    if adb_command and device_serial:
                         subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
                     else:
-                        print(Fore.RED + "❌ ADB shell not available on this device." + Style.RESET_ALL)
+                        print(Fore.RED + "❌ ADB shell not available (no device selected or on Android)." + Style.RESET_ALL)
                 elif emulator_choice == '4':
                     result = run_adb_command('shell settings get global http_proxy')
                     if result and result.stdout.strip():
@@ -1100,6 +1257,9 @@ def main():
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
         elif main_choice == '5':
+            # Drozer menu
+            drozer_menu_loop()
+        elif main_choice == '6':
             print(Fore.GREEN + "👋 Exiting... Have a great day!" + Style.RESET_ALL)
             break
         else:

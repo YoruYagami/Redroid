@@ -993,61 +993,6 @@ def drozer_menu_loop():
         else:
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
-def list_and_run_android_studio_emulators():
-    """
-    Lists all available Android Studio emulators (AVDs) and prompts
-    the user to select one to run in a new terminal with:
-      emulator -avd <AVD> -no-snapshot -writable-system [extra_flags_if_any]
-    """
-    # Run "emulator -list-avds" and parse output
-    try:
-        result = subprocess.run(["emulator", "-list-avds"], capture_output=True, text=True, check=True)
-    except FileNotFoundError:
-        print(Fore.RED + "❌ 'emulator' command not found. Please ensure Android SDK is installed and in your PATH." + Style.RESET_ALL)
-        return
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error running 'emulator -list-avds': {e}" + Style.RESET_ALL)
-        return
-
-    avds_output = result.stdout.strip().splitlines()
-    if not avds_output:
-        print(Fore.YELLOW + "⚠️ No AVDs found. Create an AVD from the Android Studio AVD Manager first." + Style.RESET_ALL)
-        return
-
-    # Display the list of AVDs
-    print(Fore.CYAN + "\nAvailable AVDs:" + Style.RESET_ALL)
-    for idx, avd in enumerate(avds_output, start=1):
-        print(f"{idx}. {avd}")
-
-    # Ask the user which AVD they want to run
-    user_choice = input(Fore.CYAN + "\nEnter the number of the AVD to run: " + Style.RESET_ALL).strip()
-    if not user_choice.isdigit() or not (1 <= int(user_choice) <= len(avds_output)):
-        print(Fore.RED + "❌ Invalid choice. Operation cancelled." + Style.RESET_ALL)
-        return
-
-    # Get the chosen AVD name
-    chosen_avd = avds_output[int(user_choice) - 1]
-    print(Fore.GREEN + f"✅ Chosen AVD: {chosen_avd}" + Style.RESET_ALL)
-
-    # Ask the user for additional flags
-    extra_flags = input(
-        Fore.CYAN
-        + "Enter any additional emulator flags (or press ENTER to skip), e.g. '-netdelay none -netspeed full': "
-        + Style.RESET_ALL
-    ).strip()
-
-    # Construct the base command
-    base_cmd = f'emulator -avd "{chosen_avd}" -no-snapshot -writable-system'
-
-    # If user typed anything, append to the command
-    if extra_flags:
-        base_cmd += f" {extra_flags}"
-
-    print(Fore.YELLOW + f"\nLaunching emulator with:\n{base_cmd}" + Style.RESET_ALL)
-
-    # Open in a new terminal
-    open_new_terminal(base_cmd)
-
 
 def show_main_menu():
     """Display the main menu."""

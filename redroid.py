@@ -67,6 +67,27 @@ def detect_emulator():
             continue
     return emulator_type, emulator_installation_path
 
+def connect_nox_adb_ports(adb_cmd):
+    """
+    NEW FUNCTION:
+    Automatically attempt to connect the local ADB to Nox 
+    on localhost ports [62001, 62025, 62026].
+    """
+    ip = '127.0.0.1'
+    ports = [62001, 62025, 62026]
+    for port in ports:
+        cmd = f'{adb_cmd} connect {ip}:{port}'
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(Fore.GREEN + f"✅ Attempted adb connect to {ip}:{port}. Output:" + Style.RESET_ALL)
+                print(Fore.GREEN + result.stdout.strip() + Style.RESET_ALL)
+            else:
+                print(Fore.YELLOW + f"⚠️ Could not connect to {ip}:{port}. Error:" + Style.RESET_ALL)
+                print(Fore.YELLOW + result.stderr.strip() + Style.RESET_ALL)
+        except Exception as e:
+            print(Fore.RED + f"❌ Exception connecting to Nox at {ip}:{port}: {str(e)}" + Style.RESET_ALL)
+
 def get_adb_command(emulator_type, emulator_installation_path):
     """Return the adb command path based on the emulator type.
        On Android, return None.
@@ -492,6 +513,9 @@ def run_nuclei_against_apk():
         if action_choice not in ['1', '2']:
             print("\n❌ Invalid choice. Operation cancelled.\n")
             return
+        if action_choice == '2':
+            # Overwrite scenario: remove existing folder first
+            shutil.rmtree(output_dir)
 
     apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
     try:
@@ -638,7 +662,8 @@ def is_frida_server_running():
     if adb_command is None or not device_serial:
         return False
     try:
-        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server', shell=True, capture_output=True, text=True)
+        result = subprocess.run(f'{adb_command} -s {device_serial} shell pgrep -f frida-server',
+                                shell=True, capture_output=True, text=True)
         if result.stdout.strip():
             return True
         else:
@@ -905,9 +930,6 @@ def install_drozer_agent():
 
     # Retrieve the latest release info from GitHub
     print(Fore.CYAN + "🔎 Checking latest Drozer Agent release..." + Style.RESET_ALL)
-    # We'll fetch from the official GitHub repo:
-    # https://api.github.com/repos/WithSecureLabs/drozer-agent/releases/latest
-    # Then parse the .apk asset.
     try:
         response = requests.get("https://api.github.com/repos/WithSecureLabs/drozer-agent/releases/latest", timeout=15)
         response.raise_for_status()
@@ -969,7 +991,6 @@ def start_drozer_forwarding():
     else:
         print(Fore.RED + "❌ Failed to set up port forwarding. Check adb logs for details." + Style.RESET_ALL)
 
-
 def show_drozer_menu():
     """Display the Drozer menu."""
     print("\n" + "=" * 50)
@@ -992,7 +1013,6 @@ def drozer_menu_loop():
             break
         else:
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
 
 def show_main_menu():
     """Display the main menu."""
@@ -1076,6 +1096,13 @@ def main():
         print(Fore.YELLOW + "⚠️ Emulator not detected or running on Android." + Style.RESET_ALL)
 
     adb_command = get_adb_command(emulator_type, emulator_installation_path)
+
+    # -------------------------------
+    # NEW CALL: If we detect NOX, attempt adb connect on all relevant ports
+    if emulator_type == 'Nox' and adb_command:
+        connect_nox_adb_ports(adb_command)
+    # -------------------------------
+
     devices = get_connected_devices(adb_command)
     if not devices:
         print(Fore.YELLOW + "⚠️ No devices connected via adb." + Style.RESET_ALL)
@@ -1122,6 +1149,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+
         elif main_choice == '2':
             while True:
                 show_run_tools_menu()
@@ -1136,6 +1164,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+
         elif main_choice == '3':
             while True:
                 show_emulator_options_menu()
@@ -1179,6 +1208,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+
         elif main_choice == '4':
             while True:
                 show_frida_menu()
@@ -1201,12 +1231,15 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+
         elif main_choice == '5':
             # Drozer menu
             drozer_menu_loop()
+
         elif main_choice == '6':
             print(Fore.GREEN + "👋 Exiting... Have a great day!" + Style.RESET_ALL)
             break
+
         else:
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 

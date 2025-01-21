@@ -491,9 +491,10 @@ def run_mob_fs():
         print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
 
 def run_nuclei_against_apk():
-    """Decompiles an APK, runs nuclei with templates, and saves output optionally.
-       Handles paths with quotes and spaces.
+    """Decompiles an APK, runs nuclei with templates, and optionally saves output.
+    Handles paths with quotes and spaces, and allows specifying a custom nuclei templates path.
     """
+    # Get valid APK path from user
     while True:
         apk_path_input = input("Enter the path to the APK file: ").strip()
         apk_path = apk_path_input.strip("'").strip('"')
@@ -504,6 +505,7 @@ def run_nuclei_against_apk():
 
     script_dir = os.getcwd()
     output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])
+    
     if os.path.exists(output_dir):
         print(f"\n⚠️ The directory \"{output_dir}\" already exists.")
         print("What would you like to do?")
@@ -517,6 +519,7 @@ def run_nuclei_against_apk():
             # Overwrite scenario: remove existing folder first
             shutil.rmtree(output_dir)
 
+    # Decompiling APK with apktool
     apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
     try:
         subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
@@ -527,33 +530,45 @@ def run_nuclei_against_apk():
         print(f"\n❌ Error: {e}. Ensure apktool is installed and accessible.")
         return
 
+    # Define built-in templates paths based on user's home directory
     user_home = os.path.expanduser("~")
     android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
     keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
+
+    # Ask user for which templates to use, including an option for custom templates
     print("\nPlease choose which templates to use:")
     print("1. Android Templates")
     print("2. Keys Templates")
     print("3. Both (Android + Keys)")
+    print("4. Custom Templates (provide your own template path)")
     template_choice = input("Enter the number of your choice: ").strip()
     templates_paths = []
+
     if template_choice == '1':
         templates_paths.append(android_template_path)
     elif template_choice == '2':
         templates_paths.append(keys_template_path)
     elif template_choice == '3':
         templates_paths.extend([android_template_path, keys_template_path])
+    elif template_choice == '4':
+        custom_path = input("Enter the full path to your nuclei templates: ").strip()
+        custom_path = custom_path.strip("'").strip('"')
+        templates_paths.append(custom_path)
     else:
         print("Invalid choice. Exiting.")
         return
 
+    # Validate each template directory exists
     for path in templates_paths:
         if not os.path.exists(path):
             print(f"Templates directory not found at {path}.")
             return
 
+    # Construct the nuclei command including the "-file" flag
     nuclei_command = ["nuclei", "-target", output_dir, "-file"]
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
+    
     print("Nuclei command:", nuclei_command)
     try:
         result = subprocess.run(nuclei_command, check=True, capture_output=True, text=True)
@@ -563,6 +578,7 @@ def run_nuclei_against_apk():
         print(f"Stderr: {e.stderr}")
         return
 
+    # Ask user if they want to save the output
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
     if save_output in ['y', 'yes']:
         output_file = os.path.join(script_dir, f"{os.path.splitext(os.path.basename(output_dir))[0]}_nuclei_output.txt")

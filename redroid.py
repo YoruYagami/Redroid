@@ -463,32 +463,127 @@ def open_new_terminal(cmd):
         print(Fore.RED + f"❌ Failed to open a new terminal: {e}" + Style.RESET_ALL)
 
 def run_mob_fs():
-    """Run MobSF using Docker."""
-    if shutil.which("docker"):
-        if not device_serial:
-            print(Fore.CYAN + "🔄 Running MobSF without MOBSF_ANALYZER_IDENTIFIER..." + Style.RESET_ALL)
-            cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
-        else:
-            if device_serial.startswith('emulator-'):
-                port = device_serial.split('-')[1]
-            elif re.match(r'^\d+\.\d+\.\d+\.\d+:\d+$', device_serial):
-                port = device_serial.split(':')[1]
-            else:
-                print(Fore.YELLOW + "⚠️ Connected device is not an emulator. Running MobSF without identifier..." + Style.RESET_ALL)
-                cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
-                open_new_terminal(cmd)
-                return
-            emulator_ip = get_emulator_ip()
-            if emulator_ip is None:
-                print(Fore.YELLOW + "⚠️ Could not get emulator IP. Running MobSF without identifier..." + Style.RESET_ALL)
-                cmd = "docker run -it --rm -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
-            else:
-                mobsf_analyzer_identifier = f"{emulator_ip}:{port}"
-                print(Fore.CYAN + f"🔧 Running MobSF with MOBSF_ANALYZER_IDENTIFIER='{mobsf_analyzer_identifier}'..." + Style.RESET_ALL)
-                cmd = f"docker run -it --rm -e MOBSF_ANALYZER_IDENTIFIER='{mobsf_analyzer_identifier}' --name mobsf -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest"
-        open_new_terminal(cmd)
+    """
+    Workflow:
+    1) Check if the emulator is Android Studio and if a device_serial exists.
+    2) If the 'mobsf' container is already running (docker ps), DO NOT prompt and exit.
+    3) Otherwise:
+       - If the 'mobsf' container exists but is not running, execute 'docker start mobsf'.
+       - If the 'mobsf' container does not exist, execute 'docker run ...' to create it.
+       - Wait for 10 seconds to allow the container to start.
+       - Display local IPs in an organized manner.
+       - Prompt the user for the proxy's IP and port (e.g., Burp).
+       - Update MobSF's config.py using 'sed'.
+       - Verify that the modification has been applied correctly (docker exec cat).
+       - Restart the container.
+    """
+
+    global emulator_type, device_serial  # If used globally in your script
+
+    # 1) Check if it's an Android Studio emulator with device_serial
+    if emulator_type != 'AndroidStudio' or not device_serial:
+        print(Fore.RED + "❌ This is not an Android Studio emulator, or device_serial is unavailable." + Style.RESET_ALL)
+        return
+
+    print(Fore.GREEN + f"✅ Android Studio emulator detected with device_serial: {device_serial}" + Style.RESET_ALL)
+
+    # Check if Docker is available
+    if not shutil.which("docker"):
+        print(Fore.RED + "❌ Docker is not installed or not in the PATH." + Style.RESET_ALL)
+        return
+
+    try:
+        # 2) Check if the 'mobsf' container is already running
+        ps_cmd = ["docker", "ps", "--format", "{{.Names}}"]
+        ps_result = subprocess.run(ps_cmd, capture_output=True, text=True, check=True)
+        running_containers = ps_result.stdout.strip().split('\n') if ps_result.stdout.strip() else []
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error checking running Docker containers: {e}" + Style.RESET_ALL)
+        return
+
+    if "mobsf" in running_containers:
+        # Container is already running → Exit without prompting
+        print(Fore.GREEN + "✅ The 'mobsf' container is already running. No further configuration required." + Style.RESET_ALL)
+        return
+
+    # If not running, check if it exists but is stopped, or doesn't exist at all
+    try:
+        ps_all_cmd = ["docker", "ps", "-a", "--format", "{{.Names}}"]
+        ps_all_result = subprocess.run(ps_all_cmd, capture_output=True, text=True, check=True)
+        all_containers = ps_all_result.stdout.strip().split('\n') if ps_all_result.stdout.strip() else []
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error checking all Docker containers: {e}" + Style.RESET_ALL)
+        return
+
+    if "mobsf" in all_containers:
+        # Container exists but is stopped → docker start
+        print(Fore.CYAN + "🔄 The 'mobsf' container exists but is stopped. Starting the container..." + Style.RESET_ALL)
+        start_result = subprocess.run("docker start mobsf", shell=True)
+        if start_result.returncode != 0:
+            print(Fore.RED + "❌ Error during 'docker start mobsf'. You may need to remove or rename the container." + Style.RESET_ALL)
+            return
     else:
-        print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
+        # Does not exist → docker run
+        run_cmd = (
+            "docker run -it --name mobsf "
+            "-e MOBSF_ANALYZER_IDENTIFIER='emulator-5554' "
+            "-p 8000:8000 -p 1337:1337 "
+            "opensecurity/mobile-security-framework-mobsf:latest"
+        )
+        print(Fore.CYAN + "🔄 Creating and starting the 'mobsf' container..." + Style.RESET_ALL)
+        subprocess.Popen(run_cmd, shell=True)
+
+    # Wait for 10 seconds
+    print(Fore.YELLOW + "⏳ Waiting 10 seconds for the container to start..." + Style.RESET_ALL)
+    time.sleep(10)
+
+    # 4) Display local IPs in an organized manner
+    print("\n" + Fore.GREEN + "===== Local IP addresses =====" + Style.RESET_ALL)
+    ip_dict = get_local_ipv4_addresses()  # Use your existing function
+    print("{:<20} {:<15}".format("Interface", "IP Address"))
+    print("-" * 35)
+    for iface, ip_addr in ip_dict.items():
+        print("{:<20} {:<15}".format(iface, ip_addr))
+
+    # 5) Prompt the user for IP and port (e.g., Burp or proxy)
+    user_ip = input(
+        Fore.CYAN + "\n📝 Enter the IP where your proxy is running (e.g., 192.168.0.129): " + Style.RESET_ALL
+    ).strip()
+    user_port = input(
+        Fore.CYAN + "📝 Enter the port of your proxy (e.g., 8080): " + Style.RESET_ALL
+    ).strip()
+
+    if not user_ip or not user_port.isdigit():
+        print(Fore.RED + "❌ Invalid IP or port. Configuration aborted." + Style.RESET_ALL)
+        return
+
+    # 6) Run sed to update IP and port, then verify and restart
+    print(Fore.CYAN + f"🔧 Configuring MobSF proxy to {user_ip}:{user_port} in config.py..." + Style.RESET_ALL)
+    sed_cmd = (
+        f'docker exec -u root mobsf bash -c '
+        f'"sed -i \\"s/\\\'127.0.0.1\\\'/\\\'{user_ip}\\\'/; s/1337/{user_port}/\\" /home/mobsf/.MobSF/config.py"'
+    )
+    subprocess.run(sed_cmd, shell=True)
+
+    # Verify if the config is updated
+    cat_cmd = 'docker exec -u root mobsf cat /home/mobsf/.MobSF/config.py'
+    cat_result = subprocess.run(cat_cmd, shell=True, capture_output=True, text=True)
+    if cat_result.returncode == 0:
+        # Check IP and port in the file
+        config_content = cat_result.stdout
+        if user_ip in config_content and user_port in config_content:
+            print(Fore.GREEN + "✅ The config.py file has been successfully updated." + Style.RESET_ALL)
+        else:
+            print(Fore.RED + "❌ Something went wrong, config.py does not contain the expected values." + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Unable to read config.py for verification. Please check manually." + Style.RESET_ALL)
+
+    print(Fore.CYAN + "♻️  Restarting the 'mobsf' container..." + Style.RESET_ALL)
+    subprocess.run("docker restart mobsf", shell=True)
+
+    print(Fore.GREEN + f"✅ MobSF is configured to forward traffic to {user_ip}:{user_port}." + Style.RESET_ALL)
+    print(Fore.GREEN + "Remember to set your emulator to use this proxy as well." + Style.RESET_ALL)
+
 
 def run_nuclei_against_apk():
     """Decompiles an APK, runs nuclei with templates, and optionally saves output.

@@ -11,19 +11,15 @@ import shlex
 import ctypes
 import time
 from platform import system
+
+# External library
 import frida
 import json
-
-# External libraries
-try:
-    import psutil
-    import requests
-    from requests.exceptions import ConnectionError
-    from bs4 import BeautifulSoup
-    from colorama import init, Fore, Style
-except ImportError as e:
-    print(f"ImportError: {e}. Ensure all dependencies are installed and available.")
-    sys.exit(1)
+import psutil
+import requests
+from requests.exceptions import ConnectionError
+from bs4 import BeautifulSoup
+from colorama import init, Fore, Style
 
 # Initialize colorama
 init(autoreset=True)

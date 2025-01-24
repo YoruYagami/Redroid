@@ -1267,6 +1267,9 @@ def auto_fridump():
         print(Fore.GREEN + "[*] Memory dump completed." + Style.RESET_ALL)
         print(Fore.GREEN + f"[*] Session data saved in '{SESSION_FILE}'." + Style.RESET_ALL)
 
+    # Call the run_auto_dump function to execute the dumping process
+    run_auto_dump()
+
 def install_mob_sf_wrapper():
     """Install MobSF using Docker."""
     if shutil.which("docker"):
@@ -1440,12 +1443,13 @@ def show_frida_menu():
     print("1. 🧩  Install Frida Server")
     print("2. ▶️  Run Frida Server")
     print("3. 📜  List installed applications")
-    print("4. 🧠  Dump memory of an application")
-    print("4. 🔓  Run SSL Pinning Bypass")
-    print("5. 🛡️  Run Root Check Bypass")
-    print("6. 🔑  Android Biometric Bypass")
-    print("7. 📝  Run Custom Script")
-    print("8. ↩️  Back")
+    print("4. 🧠  Auto Memory Dump")
+    print("5. 🔓  Run SSL Pinning Bypass")
+    print("6. 🛡️  Run Root Check Bypass")
+    print("7. 🔑  Android Biometric Bypass")
+    print("8. 📝  Run Custom Script")
+    
+    print("9. ↩️  Back")
 
 def main():
     """Main function to run the tool."""

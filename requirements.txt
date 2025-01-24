@@ -1,7 +1,8 @@
+frida
+frida-tools
 psutil
 requests
-pyopenssl
+beautifulsoup4
 bs4
-lxml
-shlex
 colorama
+apkleaks

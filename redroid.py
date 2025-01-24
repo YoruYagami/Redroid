@@ -1443,7 +1443,7 @@ def show_frida_menu():
     print("1. 🧩  Install Frida Server")
     print("2. ▶️  Run Frida Server")
     print("3. 📜  List installed applications")
-    print("4. 🧠  Auto Memory Dump")
+    print("4. 🧠  Dump memory of an application")
     print("5. 🔓  Run SSL Pinning Bypass")
     print("6. 🛡️  Run Root Check Bypass")
     print("7. 🔑  Android Biometric Bypass")

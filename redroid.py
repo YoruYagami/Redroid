@@ -1588,7 +1588,7 @@ def main():
                     run_root_check_bypass()
                 elif frida_choice == '7':
                     android_biometric_bypass()
-                elif frida_choise == '8':
+                elif frida_choice == '8':
                     run_custom_frida_script() 
                 elif frida_choice == '9':
                     break

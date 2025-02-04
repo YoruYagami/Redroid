@@ -67,7 +67,6 @@ def detect_emulator():
 
 def connect_nox_adb_ports(adb_cmd):
     """
-    NEW FUNCTION:
     Automatically attempt to connect the local ADB to Nox 
     on localhost ports [62001, 62025, 62026].
     """
@@ -251,156 +250,6 @@ def install_burpsuite_certificate(port):
     else:
         print(Fore.RED + "❌ Certificate installation failed." + Style.RESET_ALL)
 
-def install_tool(tool):
-    """Install a Python tool using pip."""
-    try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', tool, '--break-system-packages'], check=True)
-        print(Fore.GREEN + f"✅ {tool} installed successfully." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error installing {tool}: {e}" + Style.RESET_ALL)
-
-def download_latest_jadx():
-    """Download the latest version of Jadx based on the operating system."""
-    system_name = platform.system().lower()
-    if system_name == "linux":
-        if os.path.exists("/etc/debian_version"):
-            print("Detected Debian-based system (e.g., Kali Linux)")
-            os.system("sudo apt update && sudo apt install jadx -y")
-            print("Jadx installed successfully via apt.")
-        elif os.path.exists("/etc/arch-release"):
-            print("Detected Arch Linux")
-            os.system("sudo pacman -Syu jadx --noconfirm")
-            print("Jadx installed successfully via pacman.")
-        else:
-            print("⚠️ Unsupported Linux distribution. Please install Jadx manually.")
-    elif system_name == "windows":
-        try:
-            response = requests.get("https://api.github.com/repos/skylot/jadx/releases/latest")
-            response.raise_for_status()
-            latest_release = response.json()
-            assets = latest_release.get('assets', [])
-            for asset in assets:
-                if 'no-jre-win.exe' in asset['name']:
-                    download_url = asset['browser_download_url']
-                    local_filename = asset['name']
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    local_filepath = os.path.join(script_dir, "jadx-gui.exe")
-                    print(f"Downloading {local_filename} from {download_url}")
-                    with requests.get(download_url, stream=True) as r:
-                        r.raise_for_status()
-                        with open(local_filepath, 'wb') as f:
-                            for chunk in r.iter_content(chunk_size=8192):
-                                f.write(chunk)
-                    print(f"Downloaded and renamed {local_filename} to jadx-gui.exe in: {local_filepath}")
-                    return
-            print("❌ No suitable Jadx executable found in the latest release.")
-        except Exception as e:
-            print(Fore.RED + f"❌ An error occurred while trying to download Jadx: {str(e)}" + Style.RESET_ALL)
-    else:
-        print(f"❌ Unsupported operating system: {system_name}. Please install Jadx manually.")
-
-def get_latest_apktool_url():
-    """Retrieve the latest apktool.jar download URL from the official repository."""
-    url = "https://bitbucket.org/iBotPeaches/apktool/downloads/"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        for link in soup.find_all('a'):
-            href = link.get('href')
-            if href and href.endswith('.jar'):
-                return f"https://bitbucket.org{href}"
-    except Exception as e:
-        print(Fore.RED + f"❌ Error fetching apktool URL: {e}" + Style.RESET_ALL)
-    return None
-
-def setup_apktool():
-    """Set up apktool on the system."""
-    try:
-        system_name = platform.system().lower()
-        if system_name == "linux":
-            distro_info = os.popen('cat /etc/*release').read().lower()
-            if 'kali' in distro_info or 'debian' in distro_info or 'ubuntu' in distro_info:
-                os.system('sudo apt update && sudo apt install apktool -y')
-                print("✅ Apktool installed successfully via apt.")
-            elif 'arch' in distro_info or 'manjaro' in distro_info:
-                os.system('sudo pacman -Syu apktool --noconfirm')
-                print("✅ Apktool installed successfully via pacman.")
-            else:
-                print("⚠️ Unsupported Linux distribution. Please install Apktool manually.")
-        elif system_name == "windows":
-            bat_url = "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/windows/apktool.bat"
-            jar_url = get_latest_apktool_url()
-            if not jar_url:
-                print("❌ Failed to find the latest apktool.jar.")
-                return
-
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            print(f"Downloading apktool.bat from {bat_url}")
-            response = requests.get(bat_url)
-            response.raise_for_status()
-            bat_path = os.path.join(script_dir, "apktool.bat")
-            with open(bat_path, "wb") as file:
-                file.write(response.content)
-            print(f"Downloading apktool.jar from {jar_url}")
-            response = requests.get(jar_url)
-            response.raise_for_status()
-            jar_path = os.path.join(script_dir, "apktool.jar")
-            with open(jar_path, "wb") as file:
-                file.write(response.content)
-            print(f"✅ Apktool setup completed. Files downloaded to: {bat_path} and {jar_path}")
-            print("⚠️ Please move apktool.bat and apktool.jar to a directory in your PATH (e.g., C:\\Windows).")
-        else:
-            print("❌ Unsupported Operating System. Please install Apktool manually.")
-    except Exception as e:
-        print(Fore.RED + f"❌ An error occurred while setting up Apktool: {str(e)}" + Style.RESET_ALL)
-
-def check_nuclei_installed():
-    """Check if Nuclei can be executed from the terminal."""
-    try:
-        subprocess.run(["nuclei", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def check_go_installed():
-    """Check if Go is installed."""
-    try:
-        subprocess.run(["go", "version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def install_nuclei():
-    """Install Nuclei using Go and ensure it's executable from any terminal."""
-    if not check_go_installed():
-        print(Fore.RED + "❌ Go is not installed on your system. Please install Go and try again." + Style.RESET_ALL)
-        return
-    try:
-        print("✅ Installing Nuclei...")
-        subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
-        print(Fore.GREEN + "✅ Nuclei installed successfully." + Style.RESET_ALL)
-        if not shutil.which("nuclei"):
-            print(Fore.YELLOW + "⚠️ Nuclei is not executable. Please ensure the Go bin directory is in your PATH." + Style.RESET_ALL)
-        else:
-            print(Fore.GREEN + "✅ Nuclei is executable from the terminal." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error during Nuclei installation: {e}" + Style.RESET_ALL)
-    except Exception as e:
-        print(Fore.RED + f"❌ An unexpected error occurred during Nuclei installation: {str(e)}" + Style.RESET_ALL)
-
-def install_mob_sf():
-    """Install MobSF using Docker."""
-    if shutil.which("docker"):
-        print(Fore.CYAN + "🔄 Pulling the latest MobSF Docker image..." + Style.RESET_ALL)
-        try:
-            subprocess.run("docker pull opensecurity/mobile-security-framework-mobsf:latest", shell=True, check=True)
-            print(Fore.GREEN + "✅ MobSF Docker image pulled successfully." + Style.RESET_ALL)
-        except subprocess.CalledProcessError as e:
-            print(Fore.RED + f"❌ Failed to pull MobSF Docker image: {e}" + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
-
 def get_emulator_ip():
     """Retrieve emulator's IP address."""
     if not device_serial:
@@ -533,7 +382,6 @@ def run_mobfs():
     print(Fore.GREEN + f"The emulator now uses {settings_key} = {user_ip}:{user_port} (if supported by your Android image)." + Style.RESET_ALL)
     print(Fore.GREEN + "To stop MobSF, close the new terminal window or run: docker stop mobsf.\n" + Style.RESET_ALL)
 
-
 def run_nuclei_against_apk():
     """Decompiles an APK, runs nuclei with templates, and optionally saves output.
     Handles paths with quotes and spaces, and allows specifying a custom nuclei templates path.
@@ -639,63 +487,11 @@ def is_go_installed():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-def install_nuclei_wrapper():
-    """Wrapper function for installing nuclei."""
-    if not check_go_installed():
-        print(Fore.RED + "❌ Go is not installed on your system. Please install Go and try again." + Style.RESET_ALL)
-        return
-    try:
-        print("✅ Installing Nuclei...")
-        subprocess.run("go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest", shell=True, check=True)
-        print(Fore.GREEN + "✅ Nuclei installed successfully." + Style.RESET_ALL)
-        if not check_nuclei_installed():
-            print(Fore.YELLOW + "⚠️ Nuclei is not executable. Please ensure the Go bin directory is added to your PATH manually." + Style.RESET_ALL)
-            if not check_nuclei_installed():
-                print(Fore.RED + "❌ Nuclei is still not executable. Please check your PATH settings." + Style.RESET_ALL)
-            else:
-                print(Fore.GREEN + "✅ Nuclei is now executable from the terminal." + Style.RESET_ALL)
-        else:
-            print(Fore.GREEN + "✅ Nuclei is already executable from the terminal." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Error during Nuclei installation: {e}" + Style.RESET_ALL)
-    except Exception as e:
-        print(Fore.RED + f"❌ An unexpected error occurred during Nuclei installation: {str(e)}" + Style.RESET_ALL)
-
-def remove_ads_and_bloatware():
-    """Remove ads and bloatware from the emulator."""
-    if not emulator_type:
-        print(Fore.RED + "❗ No emulator detected. Please start an emulator and try again." + Style.RESET_ALL)
-        return
-    if not device_serial:
-        print(Fore.RED + "❗ No device selected. Please connect to an emulator and try again." + Style.RESET_ALL)
-        return
-    print(Fore.CYAN + "🧹 Removing Bloatware and Ads from the emulator..." + Style.RESET_ALL)
-    run_adb_command('root')
-    run_adb_command('remount')
-    bloatware_apps = [
-        'AmazeFileManager', 'AppStore', 'CtsShimPrebuilt', 'EasterEgg', 'Facebook',
-        'Helper', 'LiveWallpapersPicker', 'PrintRecommendationService', 'PrintSpooler',
-        'WallpaperBackup', 'newAppNameEn'
-    ]
-    for app in bloatware_apps:
-        print(Fore.YELLOW + f"🚮 Removing {app}..." + Style.RESET_ALL)
-        run_adb_command(f'shell rm -rf /system/app/{app}')
-    print(Fore.GREEN + "✅ Bloatware removed successfully." + Style.RESET_ALL)
-    print(Fore.CYAN + "🔄 Rebooting the emulator..." + Style.RESET_ALL)
-    run_adb_command("shell su -c 'setprop ctl.restart zygote'")
-    print(Fore.GREEN + "✅ After successful reboot, configure your settings as needed." + Style.RESET_ALL)
-
-def is_apkleaks_installed():
-    """Check if apkleaks is installed."""
-    try:
-        subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
 def run_apkleaks():
     """Run apkleaks on a specified APK file and automatically save the output."""
-    if not is_apkleaks_installed():
+    try:
+        subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except (subprocess.CalledProcessError, FileNotFoundError):
         print(Fore.RED + "❌ apkleaks is not installed or not found in your PATH. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
         return
 
@@ -728,7 +524,6 @@ def run_apkleaks():
         print(Fore.RED + "❌ apkleaks is not installed. Please install it using 'pip install apkleaks'." + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
-
 
 def is_frida_server_running():
     """Check if a Frida-Server process is currently running on the device."""
@@ -1266,18 +1061,6 @@ def auto_fridump():
     # Call the run_auto_dump function to execute the dumping process
     run_auto_dump()
 
-def install_mob_sf_wrapper():
-    """Install MobSF using Docker."""
-    if shutil.which("docker"):
-        print(Fore.CYAN + "🔄 Pulling the latest MobSF Docker image..." + Style.RESET_ALL)
-        try:
-            subprocess.run("docker pull opensecurity/mobile-security-framework-mobsf:latest", shell=True, check=True)
-            print(Fore.GREEN + "✅ MobSF Docker image pulled successfully." + Style.RESET_ALL)
-        except subprocess.CalledProcessError as e:
-            print(Fore.RED + f"❌ Failed to pull MobSF Docker image: {e}" + Style.RESET_ALL)
-    else:
-        print(Fore.RED + "❌ Docker is not installed. Please install Docker first." + Style.RESET_ALL)
-
 def install_drozer_agent():
     """
     Download the latest Drozer Agent APK from GitHub and install it automatically
@@ -1357,7 +1140,7 @@ def show_drozer_menu():
     print(f"{'Drozer':^50}")
     print("=" * 50)
     print("1. 🏹  Install Drozer Agent")
-    print("2. 🚀  Start port forwarding (31415 -> 31415)")
+    print("2. 🚀  Forward Port Locally (31415)")
     print("3. ↩️  Back")
 
 def drozer_menu_loop():
@@ -1373,40 +1156,6 @@ def drozer_menu_loop():
             break
         else:
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-def show_main_menu():
-    """Display the main menu."""
-    print(Fore.CYAN + r"""
-    __________       ________               .__    .___
-    \______   \ ____ \______ \_______  ____ |__| __| _/
-     |       _// __ \ |    |  \_  __ \/  _ \|  |/ __ | 
-     |    |   \  ___/ |       \  | \(  <_> )  / /_/ | 
-     |____|_  /\___  >_______  /__|   \____/|__\____ | 
-            \/     \/        \/                     \/ 
-    """ + Style.RESET_ALL)
-    print(Fore.GREEN + "Welcome to the Redroid Tool!" + Style.RESET_ALL)
-    print("=" * 50)
-    print("1. 🛠️  Install Tools")
-    print("2. 🚀  Run Tools")
-    print("3. 🎮  Emulator Options")
-    print("4. 🕵️  Frida")
-    print("5. 🏹  Drozer")
-    print("6. ❌  Exit")
-
-def show_install_tools_menu():
-    """Display the Install Tools submenu."""
-    print("\n" + "=" * 50)
-    print(f"{'Install Tools':^50}")
-    print("=" * 50)
-    print("1. 🧩  Frida")
-    print("2. 🔐  Objection")
-    print("3. 🛠️  reFlutter")
-    print("4. 🖥️  Jadx")
-    print("5. 🗃️  APKTool")
-    print("6. 🔎  Nuclei")
-    print("7. 📦  MobSF (docker)")
-    print("8. 🔍  apkleaks")
-    print("9. ↩️  Back")
 
 def show_run_tools_menu():
     """Display the Run Tools submenu."""
@@ -1444,8 +1193,26 @@ def show_frida_menu():
     print("6. 🛡️  Run Root Check Bypass")
     print("7. 🔑  Android Biometric Bypass")
     print("8. 📝  Run Custom Script")
-    
     print("9. ↩️  Back")
+
+def show_main_menu():
+    """Display the main menu."""
+    print(Fore.CYAN + r"""
+    __________       ________               .__    .___
+    \______   \ ____ \______ \_______  ____ |__| __| _/
+     |       _// __ \ |    |  \_  __ \/  _ \|  |/ __ | 
+     |    |   \  ___/ |       \  | \(  <_> )  / /_/ | 
+     |____|_  /\___  >_______  /__|   \____/|__\____ | 
+            \/     \/        \/                     \/ 
+    """ + Style.RESET_ALL)
+    print(Fore.GREEN + "Welcome to the Redroid Tool!" + Style.RESET_ALL)
+    print("=" * 50)
+    # Sezione "Install Tools" rimossa
+    print("1. 🚀  Run Tools")
+    print("2. 🎮  Emulator Options")
+    print("3. 🕵️  Frida")
+    print("4. 🏹  Drozer")
+    print("5. ❌  Exit")
 
 def main():
     """Main function to run the tool."""
@@ -1488,31 +1255,6 @@ def main():
         main_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
         if main_choice == '1':
             while True:
-                show_install_tools_menu()
-                tools_choice = input(Fore.CYAN + "🛠️ Enter your choice: " + Style.RESET_ALL).strip()
-                if tools_choice == '1':
-                    install_tool("frida-tools")
-                elif tools_choice == '2':
-                    install_tool("objection")
-                elif tools_choice == '3':
-                    install_tool("reFlutter")
-                elif tools_choice == '4':
-                    download_latest_jadx()
-                elif tools_choice == '5':
-                    setup_apktool()
-                elif tools_choice == '6':
-                    install_nuclei()
-                elif tools_choice == '7':
-                    install_mob_sf()
-                elif tools_choice == '8':
-                    install_tool("apkleaks")
-                elif tools_choice == '9':
-                    break
-                else:
-                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-        elif main_choice == '2':
-            while True:
                 show_run_tools_menu()
                 run_tools_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
                 if run_tools_choice == '1':
@@ -1525,8 +1267,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-        elif main_choice == '3':
+        elif main_choice == '2':
             while True:
                 show_emulator_options_menu()
                 emulator_choice = input(Fore.CYAN + "🕹️ Enter your choice: " + Style.RESET_ALL).strip()
@@ -1569,8 +1310,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-        elif main_choice == '4':
+        elif main_choice == '3':
             while True:
                 show_frida_menu()
                 frida_choice = input(Fore.CYAN + "🕵️ Enter your choice: " + Style.RESET_ALL).strip()
@@ -1594,15 +1334,12 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-        elif main_choice == '5':
+        elif main_choice == '4':
             # Drozer menu
             drozer_menu_loop()
-
-        elif main_choice == '6':
+        elif main_choice == '5':
             print(Fore.GREEN + "👋 Exiting... Have a great day!" + Style.RESET_ALL)
             break
-
         else:
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 

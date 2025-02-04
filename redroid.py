@@ -250,6 +250,42 @@ def install_burpsuite_certificate(port):
     else:
         print(Fore.RED + "❌ Certificate installation failed." + Style.RESET_ALL)
 
+def run_android_studio_emulator():
+    try:
+        username = os.getlogin()
+        emulator_dir = os.path.join("C:\\Users", username, "AppData", "Local", "Android", "Sdk", "emulator")
+        emulator_exe = os.path.join(emulator_dir, "emulator.exe")
+        if not os.path.exists(emulator_exe):
+            print(Fore.RED + f"❌ Emulator not found in {emulator_dir}" + Style.RESET_ALL)
+            return
+
+        list_command = f'"{emulator_exe}" -list-avds'
+        output = subprocess.check_output(list_command, shell=True, universal_newlines=True)
+        avds = [line.strip() for line in output.strip().splitlines() if line.strip()]
+        if not avds:
+            print(Fore.RED + "❌ No AVD found." + Style.RESET_ALL)
+            return
+
+        print(Fore.GREEN + "Available AVDs:" + Style.RESET_ALL)
+        for idx, avd in enumerate(avds, 1):
+            print(f"{idx}. {avd}")
+
+        choice = input(Fore.CYAN + "Enter the number of the AVD to launch: " + Style.RESET_ALL).strip()
+        if not choice.isdigit() or int(choice) < 1 or int(choice) > len(avds):
+            print(Fore.RED + "❌ Invalid selection." + Style.RESET_ALL)
+            return
+
+        selected_avd = avds[int(choice) - 1]
+        launch_command = f'cd /d "{emulator_dir}" && emulator.exe -avd {selected_avd} -no-snapshot -writable-system'
+        print(Fore.CYAN + f"Launching emulator in background: {launch_command}" + Style.RESET_ALL)
+        
+        if platform.system() == "Windows":
+            subprocess.Popen(launch_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            subprocess.Popen(launch_command, shell=True)
+    except Exception as e:
+        print(Fore.RED + f"❌ Error launching emulator: {e}" + Style.RESET_ALL)
+
 def get_emulator_ip():
     """Retrieve emulator's IP address."""
     if not device_serial:
@@ -625,20 +661,26 @@ def install_frida_server():
         pass
 
 def run_frida_server():
-    """Start Frida-Server without pre-checks and ignore bind errors if port is in use."""
     global adb_command, device_serial
     if adb_command is None or not device_serial:
         print(Fore.RED + "❌ ADB command cannot run: either not on desktop or no device selected." + Style.RESET_ALL)
         return
+    if is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is already running." + Style.RESET_ALL)
+        return
     command = f'shell "/data/local/tmp/frida-server &"'
     full_command = f'{adb_command} -s {device_serial} {command}'
     try:
-        result = subprocess.run(full_command, shell=True, capture_output=True, check=True, text=True)
-        if "Error binding to address" in result.stderr:
-            print(Fore.YELLOW + result.stderr.strip() + Style.RESET_ALL)
-        print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
+        subprocess.Popen(full_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        # Wait briefly for the server to initialize
+        time.sleep(1)
+        if is_frida_server_running():
+            print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
+        else:
+            print(Fore.YELLOW + "⚠️ Frida-Server may not have started properly." + Style.RESET_ALL)
+    except Exception as e:
         print(Fore.RED + f"❌ Failed to start Frida-Server: {e}" + Style.RESET_ALL)
+
 
 def list_installed_applications():
     """List installed applications on the emulator using Frida."""
@@ -1173,12 +1215,14 @@ def show_emulator_options_menu():
     print(f"{'Emulator Options':^50}")
     print("=" * 50)
     print("1. 🧹  Remove Ads and Bloatware from Nox Emulator")
-    print("2. 🛡️  Install Burp Certificate")
-    print("3. 💻  Open ADB shell")
-    print("4. 🌐  Print proxy status")
-    print("5. ⚙️  Set up/modify proxy")
-    print("6. ❌  Remove proxy")
-    print("7. ↩️  Back")
+    print("2. 🚀  Run Android Studio Emulator")
+    print("3. 🛡️  Install Burp Certificate")
+    print("4. 💻  Open ADB shell")
+    print("5. 🌐  Print proxy status")
+    print("6. ⚙️  Set up/modify proxy")
+    print("7. ❌  Remove proxy")
+    print("8. ↩️  Back")
+
 
 def show_frida_menu():
     """Display the Frida submenu."""
@@ -1274,23 +1318,25 @@ def main():
                 if emulator_choice == '1':
                     remove_ads_and_bloatware()
                 elif emulator_choice == '2':
+                    run_android_studio_emulator()
+                elif emulator_choice == '3':
                     port = input(Fore.CYAN + "📝 Enter the Burp Suite port: " + Style.RESET_ALL).strip()
                     if port.isdigit():
                         install_burpsuite_certificate(int(port))
                     else:
                         print(Fore.RED + "❌ Invalid port. Enter a valid port number." + Style.RESET_ALL)
-                elif emulator_choice == '3':
+                elif emulator_choice == '4':
                     if adb_command and device_serial:
                         subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
                     else:
                         print(Fore.RED + "❌ ADB shell not available (no device selected or on Android)." + Style.RESET_ALL)
-                elif emulator_choice == '4':
+                elif emulator_choice == '5':
                     result = run_adb_command('shell settings get global http_proxy')
                     if result and result.stdout.strip():
                         print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + result.stdout.strip() + Style.RESET_ALL)
                     else:
                         print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
-                elif emulator_choice == '5':
+                elif emulator_choice == '6':
                     ipv4_addresses = get_local_ipv4_addresses()
                     print("\n" + "{:<30} {:<15}".format("Interface", "IP Address"))
                     print("-" * 45)
@@ -1303,10 +1349,10 @@ def main():
                         print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
                     else:
                         print(Fore.RED + "❌ Invalid IP address or port number." + Style.RESET_ALL)
-                elif emulator_choice == '6':
+                elif emulator_choice == '7':
                     subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy :0', shell=True)
                     print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
-                elif emulator_choice == '7':
+                elif emulator_choice == '8':
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)

@@ -16,7 +16,7 @@ import requests
 from colorama import Fore, Style
 warnings.filterwarnings("ignore")
 
-# External library
+# External libraries
 import frida
 import json
 import psutil
@@ -32,6 +32,11 @@ emulator_type = None
 emulator_installation_path = None
 adb_command = None
 device_serial = None
+target_app = None   # Global target application package name
+
+# ============================================================
+#  Utility & Emulator/ADB related functions
+# ============================================================
 
 def detect_emulator():
     """Detect whether Nox, Genymotion, or Android Studio emulator is running.
@@ -59,7 +64,6 @@ def detect_emulator():
                 emulator_type = 'Genymotion'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
-            # Check for Android Studio Emulator processes:
             elif name and ("emulator" in name.lower() or "qemu-system" in name.lower()):
                 emulator_type = 'AndroidStudio'
                 emulator_installation_path = os.path.dirname(exe_path)
@@ -157,7 +161,6 @@ def try_download_certificate(ip, port):
     input_der_file = "cacert.der"
     output_file = "9a5ba575.0"
 
-    # Check if the certificate (already renamed) exists locally
     if os.path.exists(output_file):
         print(Fore.GREEN + f"✅ Found local certificate '{output_file}', skipping remote download." + Style.RESET_ALL)
     else:
@@ -168,8 +171,6 @@ def try_download_certificate(ip, port):
                 with open(input_der_file, "wb") as certificate_file:
                     certificate_file.write(response.content)
                 print(Fore.GREEN + f"✅ Certificate downloaded successfully from {cert_url}." + Style.RESET_ALL)
-
-                # Rename the file (no OpenSSL conversion is used)
                 os.rename(input_der_file, output_file)
                 print(Fore.GREEN + f"✅ Renamed {input_der_file} to {output_file}." + Style.RESET_ALL)
             else:
@@ -182,26 +183,21 @@ def try_download_certificate(ip, port):
             print(Fore.RED + f"❌ An unexpected error occurred during download: {str(e)}" + Style.RESET_ALL)
             return False
 
-    # Attempt to push the certificate to the device
     push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
     if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
         print(Fore.YELLOW + "⚠️ Error: File system is read-only. Retrying with adb root and remount." + Style.RESET_ALL)
-        # Execute adb root and wait
         result_root = run_adb_command('root')
         if result_root is None:
             print(Fore.RED + "❌ Unable to obtain root privileges via adb." + Style.RESET_ALL)
             return False
-        time.sleep(5)  # Wait 5 seconds
+        time.sleep(5)
         result_remount = run_adb_command('remount')
         if result_remount is None:
             print(Fore.RED + "❌ Unable to remount the partition as writable." + Style.RESET_ALL)
             return False
-
-        # Retry pushing the certificate
         push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
         if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
             print(Fore.RED + "❌ The partition is still read-only." + Style.RESET_ALL)
-            # Ask the user if they want to reboot the device
             user_choice = input(Fore.YELLOW + "Would you like to reboot the device now? (y/n): " + Style.RESET_ALL).strip().lower()
             if user_choice in ['y', 'yes']:
                 reboot_result = run_adb_command('reboot')
@@ -214,14 +210,12 @@ def try_download_certificate(ip, port):
                 print(Fore.RED + "❌ Certificate installation failed due to read-only partition." + Style.RESET_ALL)
                 return False
 
-    # Set permissions on the certificate
     chmod_result = run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_file}')
     if chmod_result is None:
         print(Fore.RED + "❌ Failed to set permissions on the certificate." + Style.RESET_ALL)
         return False
 
     print(Fore.GREEN + "✅ Burp Suite certificate installed successfully on the device." + Style.RESET_ALL)
-    # Remove the local file if it is no longer needed
     try:
         os.remove(output_file)
     except Exception as e:
@@ -229,14 +223,11 @@ def try_download_certificate(ip, port):
     return True
 
 def install_burpsuite_certificate(port):
-    """Install the Burp Suite certificate onto the device using
-    the provided IP and port.
-    """
+    """Install the Burp Suite certificate onto the device using the provided IP and port."""
     ip = input(Fore.CYAN + "📝 Enter the IP (e.g., 127.0.0.1): " + Style.RESET_ALL).strip()
     if not ip:
         print(Fore.RED + "❌ Invalid IP." + Style.RESET_ALL)
         return
-
     print(Fore.CYAN + f"🔍 Attempting to download the certificate from {ip}:{port}..." + Style.RESET_ALL)
     if try_download_certificate(ip, port):
         print(Fore.GREEN + "✅ Certificate installation completed." + Style.RESET_ALL)
@@ -251,27 +242,22 @@ def run_android_studio_emulator():
         if not os.path.exists(emulator_exe):
             print(Fore.RED + f"❌ Emulator not found in {emulator_dir}" + Style.RESET_ALL)
             return
-
         list_command = f'"{emulator_exe}" -list-avds'
         output = subprocess.check_output(list_command, shell=True, universal_newlines=True)
         avds = [line.strip() for line in output.strip().splitlines() if line.strip()]
         if not avds:
             print(Fore.RED + "❌ No AVD found." + Style.RESET_ALL)
             return
-
         print(Fore.GREEN + "Available AVDs:" + Style.RESET_ALL)
         for idx, avd in enumerate(avds, 1):
             print(f"{idx}. {avd}")
-
         choice = input(Fore.CYAN + "Enter the number of the AVD to launch: " + Style.RESET_ALL).strip()
         if not choice.isdigit() or int(choice) < 1 or int(choice) > len(avds):
             print(Fore.RED + "❌ Invalid selection." + Style.RESET_ALL)
             return
-
         selected_avd = avds[int(choice) - 1]
         launch_command = f'cd /d "{emulator_dir}" && emulator.exe -avd {selected_avd} -no-snapshot -writable-system'
         print(Fore.CYAN + f"Launching emulator in background: {launch_command}" + Style.RESET_ALL)
-        
         if platform.system() == "Windows":
             subprocess.Popen(launch_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
         else:
@@ -338,25 +324,24 @@ def open_new_terminal(cmd):
     except Exception as e:
         print(Fore.RED + f"❌ Failed to open a new terminal: {e}" + Style.RESET_ALL)
 
+# ============================================================
+#  Red Team / Mobile Security Functions (MobSF, nuclei, apkleaks, Frida, Drozer, etc.)
+# ============================================================
+
 def run_mobsf():
     global emulator_type, device_serial, adb_command
 
-    # 0) Verify Docker installation
     if not shutil.which("docker"):
         print(Fore.RED + "❌ Docker is not installed or not in the PATH." + Style.RESET_ALL)
         return
 
-    # --- Header ---
     print("\n" + "=" * 50)
     print(f"{Fore.MAGENTA}=== MobSF Setup ==={Style.RESET_ALL}")
     print("=" * 50)
 
-    # --- 1) Ask about emulator usage ---
     print(f"\n{Fore.CYAN}Do you want to connect MobSF to an emulator?{Style.RESET_ALL}")
-    devices = get_connected_devices(adb_command)  # returns list of device serials
-
+    devices = get_connected_devices(adb_command)
     if devices:
-        # Choose a default emulator: if "emulator-5554" exists, use it; otherwise, use the first one.
         default_emulator = "emulator-5554" if "emulator-5554" in devices else devices[0]
         print(f"1. Use detected emulator ({default_emulator})")
     else:
@@ -368,13 +353,10 @@ def run_mobsf():
 
     if emu_choice == "1":
         if devices:
-            # If only one device is detected, select it automatically.
             if len(devices) == 1:
                 device_serial = devices[0]
             else:
-                # If multiple devices are detected, use the default as determined above.
                 device_serial = default_emulator
-                # Also, give the user a chance to review the full list.
                 print(f"\n{Fore.GREEN}Detected devices:{Style.RESET_ALL}")
                 for idx, dev in enumerate(devices, 1):
                     print(f"  {idx}. {dev}")
@@ -403,10 +385,8 @@ def run_mobsf():
         print(Fore.RED + "❌ Invalid choice. Aborting." + Style.RESET_ALL)
         return
 
-    # --- 2) Ask about custom proxy usage ---
     custom_proxy_choice = input(f"\n{Fore.CYAN}Do you want to use a custom proxy for MobSF? (y/n): {Style.RESET_ALL}").strip().lower()
     if custom_proxy_choice in ["y", "yes"]:
-        # Show the local IP table only if custom proxy is desired.
         print("\n" + Fore.GREEN + "===== Local IP Addresses =====" + Style.RESET_ALL)
         ip_dict = get_local_ipv4_addresses()
         header = f"{'Interface':<30} {'IP Address':<20}"
@@ -420,7 +400,6 @@ def run_mobsf():
             print(Fore.RED + "❌ Invalid proxy IP or port. Aborting configuration." + Style.RESET_ALL)
             return
         use_proxy = True
-        # If an emulator is used, ask if its global proxy should be configured.
         if device_serial:
             proxy_type = input(f"{Fore.CYAN}Configure global proxy on emulator as 'http' or 'https'? (default: http): {Style.RESET_ALL}").strip().lower()
             if proxy_type not in ["http", "https"]:
@@ -428,11 +407,9 @@ def run_mobsf():
     else:
         use_proxy = False
 
-    # --- 3) Remove any existing 'mobsf' container ---
     print(f"\n{Fore.YELLOW}Removing any existing 'mobsf' container...{Style.RESET_ALL}")
     subprocess.run("docker rm -f mobsf", shell=True, capture_output=True)
 
-    # --- 4) Build docker run command ---
     docker_cmd = 'docker run -it --name mobsf -p 8000:8000 -p 1337:1337 '
     if device_serial:
         docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
@@ -444,7 +421,6 @@ def run_mobsf():
     print(docker_cmd)
     open_new_terminal(docker_cmd)
 
-    # --- 5) If emulator is used and custom proxy is set, configure the emulator's global proxy ---
     if device_serial and use_proxy:
         settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"
         adb_cmd = f'adb -s {device_serial} shell settings put global {settings_key} {user_ip}:{user_port}'
@@ -457,10 +433,6 @@ def run_mobsf():
     print(Fore.GREEN + "\n✅ Setup complete! The MobSF container is starting in a separate window." + Style.RESET_ALL)
 
 def run_nuclei_against_apk():
-    """Decompiles an APK, runs nuclei with templates, and optionally saves output.
-    Handles paths with quotes and spaces, and allows specifying a custom nuclei templates path.
-    """
-    # Get valid APK path from user
     while True:
         apk_path_input = input("Enter the path to the APK file: ").strip()
         apk_path = apk_path_input.strip("'").strip('"')
@@ -482,10 +454,8 @@ def run_nuclei_against_apk():
             print("\n❌ Invalid choice. Operation cancelled.\n")
             return
         if action_choice == '2':
-            # Overwrite scenario: remove existing folder first
             shutil.rmtree(output_dir)
 
-    # Decompiling APK with apktool
     apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
     try:
         subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
@@ -496,12 +466,10 @@ def run_nuclei_against_apk():
         print(f"\n❌ Error: {e}. Ensure apktool is installed and accessible.")
         return
 
-    # Define built-in templates paths based on user's home directory
     user_home = os.path.expanduser("~")
     android_template_path = os.path.join(user_home, "nuclei-templates", "file", "android")
     keys_template_path = os.path.join(user_home, "nuclei-templates", "file", "keys")
 
-    # Ask user for which templates to use, including an option for custom templates
     print("\nPlease choose which templates to use:")
     print("1. Android Templates")
     print("2. Keys Templates")
@@ -524,13 +492,11 @@ def run_nuclei_against_apk():
         print("Invalid choice. Exiting.")
         return
 
-    # Validate each template directory exists
     for path in templates_paths:
         if not os.path.exists(path):
             print(f"Templates directory not found at {path}.")
             return
 
-    # Construct the nuclei command including the "-file" flag
     nuclei_command = ["nuclei", "-target", output_dir, "-file"]
     for template_path in templates_paths:
         nuclei_command.extend(["-t", template_path])
@@ -544,7 +510,6 @@ def run_nuclei_against_apk():
         print(f"Stderr: {e.stderr}")
         return
 
-    # Ask user if they want to save the output
     save_output = input("Do you want to save the output? (y/n): ").strip().lower()
     if save_output in ['y', 'yes']:
         output_file = os.path.join(script_dir, f"{os.path.splitext(os.path.basename(output_dir))[0]}_nuclei_output.txt")
@@ -554,7 +519,6 @@ def run_nuclei_against_apk():
     print("Analysis complete.")
 
 def is_go_installed():
-    """Check if Go is installed."""
     try:
         subprocess.run(["go", "version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return True
@@ -562,7 +526,6 @@ def is_go_installed():
         return False
 
 def run_apkleaks():
-    """Run apkleaks on a specified APK file and automatically save the output."""
     try:
         subprocess.run(['apkleaks', '-h'], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -570,11 +533,7 @@ def run_apkleaks():
         return
 
     apk_path_input = input("📝 Enter the path to the APK file: ").strip()
-    
-    # Remove all quotes from the input
     apk_path = apk_path_input.replace('"', '').replace("'", '')
-
-    # Normalize the path (handles backslashes on Windows)
     apk_path = os.path.normpath(apk_path)
 
     if not os.path.isfile(apk_path):
@@ -586,10 +545,7 @@ def run_apkleaks():
         output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_apkleaks_output.txt"
         output_path = os.path.join(os.getcwd(), output_filename)
         command = ['apkleaks', '-f', apk_path, '-o', output_path]
-        
-        # Execute the command
         result = subprocess.run(command, check=True, capture_output=True, text=True)
-        
         print(Fore.GREEN + f"✅ apkleaks output saved to '{output_path}'." + Style.RESET_ALL)
         print(Fore.GREEN + f"📄 Output:\n{result.stdout}" + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
@@ -600,7 +556,6 @@ def run_apkleaks():
         print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
 
 def is_frida_server_running():
-    """Check if a Frida-Server process is currently running on the device."""
     global adb_command, device_serial
     if adb_command is None or not device_serial:
         return False
@@ -615,13 +570,7 @@ def is_frida_server_running():
         return False
 
 def install_frida_server():
-    """
-    Check if Frida-Server is already running on the device.
-    If not, download the matching Frida-Server binary, decompress, push it to the device,
-    set the executable permission, and clean up.
-    """
     global adb_command, device_serial
-
     if adb_command is None or not device_serial:
         print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Frida-Server." + Style.RESET_ALL)
         return
@@ -710,7 +659,6 @@ def run_frida_server():
     full_command = f'{adb_command} -s {device_serial} {command}'
     try:
         subprocess.Popen(full_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        # Wait briefly for the server to initialize
         time.sleep(1)
         if is_frida_server_running():
             print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
@@ -718,7 +666,6 @@ def run_frida_server():
             print(Fore.YELLOW + "⚠️ Frida-Server may not have started properly." + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"❌ Failed to start Frida-Server: {e}" + Style.RESET_ALL)
-
 
 def list_installed_applications():
     """List installed applications on the emulator using Frida."""
@@ -737,8 +684,75 @@ def list_installed_applications():
     except FileNotFoundError:
         print(Fore.RED + "❌ Frida is not installed or not found in your PATH. Please install Frida." + Style.RESET_ALL)
 
+# ============================================================
+#  New Target Selection Functions (using ADB)
+# ============================================================
+
+def list_relevant_apps():
+    """
+    Uses ADB to list running processes and returns only those that look like app package names.
+    It runs "adb shell ps" on the selected device and filters for process names that contain a dot.
+    """
+    global adb_command, device_serial
+    if adb_command is None or not device_serial:
+        print(Fore.RED + "❌ ADB command unavailable or no device selected." + Style.RESET_ALL)
+        return []
+    
+    try:
+        cmd = f'{adb_command} -s {device_serial} shell ps'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error executing adb shell ps: {e}" + Style.RESET_ALL)
+        return []
+    
+    lines = result.stdout.splitlines()
+    if not lines:
+        print(Fore.YELLOW + "⚠️ No processes found." + Style.RESET_ALL)
+        return []
+    
+    apps = []
+    # Skip header and assume the last column is the process name.
+    for line in lines[1:]:
+        parts = line.split()
+        if parts:
+            process_name = parts[-1]
+            if '.' in process_name and process_name not in apps:
+                apps.append(process_name)
+    return apps
+
+def set_target_app():
+    """
+    Lists running applications (using ADB) and lets the user select one as the target.
+    The selected package name is saved in the global variable `target_app`.
+    """
+    global target_app
+    apps = list_relevant_apps()
+    if not apps:
+        print(Fore.YELLOW + "⚠️ No relevant running applications found." + Style.RESET_ALL)
+        return
+
+    print("\n" + Fore.CYAN + "Select a target application from the list:" + Style.RESET_ALL)
+    for idx, app in enumerate(apps, 1):
+        print(f"{idx}. {app}")
+
+    choice = input(Fore.CYAN + "Enter the number of your target app: " + Style.RESET_ALL).strip()
+    if not choice.isdigit() or int(choice) < 1 or int(choice) > len(apps):
+        print(Fore.RED + "❌ Invalid choice. Target not set." + Style.RESET_ALL)
+        return
+
+    target_app = apps[int(choice) - 1]
+    print(Fore.GREEN + f"✅ Target set to: {target_app}" + Style.RESET_ALL)
+
+# ============================================================
+#  Frida functions modified to use the global target (if set)
+# ============================================================
+
 def run_ssl_pinning_bypass():
-    """Run SSL Pinning Bypass using Frida."""
+    """
+    Run SSL Pinning Bypass using Frida.
+    If a target application has been set using the global variable `target_app`,
+    that package is used automatically. Otherwise, the list of running apps is displayed for selection.
+    """
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
     if not os.path.exists(script_path):
         print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
@@ -749,17 +763,21 @@ def run_ssl_pinning_bypass():
         if not is_frida_server_running():
             print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with SSL Pinning Bypass." + Style.RESET_ALL)
             return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the SSL pinning bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+
+    global target_app
+    if not target_app:
+        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
+            return
+    app_package = target_app
+    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
+    cmd = f'frida -U -f {app_package} -l "{script_path}"'
+    print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
+    open_new_terminal(cmd)
 
 def run_root_check_bypass():
-    """Run Root Check Bypass using Frida."""
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
     if not os.path.exists(script_path):
         print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
@@ -770,17 +788,20 @@ def run_root_check_bypass():
         if not is_frida_server_running():
             print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Root Check Bypass." + Style.RESET_ALL)
             return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the Root Check Bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+    global target_app
+    if not target_app:
+        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
+            return
+    app_package = target_app
+    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
+    cmd = f'frida -U -f {app_package} -l "{script_path}"'
+    print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
+    open_new_terminal(cmd)
 
 def android_biometric_bypass():
-    """Run Android Biometric Bypass using Frida."""
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'android-biometric-bypass.js')
     if not os.path.exists(script_path):
         print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
@@ -791,17 +812,20 @@ def android_biometric_bypass():
         if not is_frida_server_running():
             print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Android Biometric Bypass." + Style.RESET_ALL)
             return
-    list_installed_applications()
-    app_package = input("📱 Enter the app package name to run the Android Biometric Bypass on: ").strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Please enter a valid app package name." + Style.RESET_ALL)
+    global target_app
+    if not target_app:
+        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
+            return
+    app_package = target_app
+    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
+    cmd = f'frida -U -f {app_package} -l "{script_path}"'
+    print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
+    open_new_terminal(cmd)
 
 def run_custom_frida_script():
-    """Run a custom Frida script provided by the user."""
     frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
     known_scripts = {
         'ssl-pinning-bypass.js',
@@ -847,24 +871,22 @@ def run_custom_frida_script():
             print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with the custom script." + Style.RESET_ALL)
             return
     list_installed_applications()
-    app_package = input(Fore.CYAN + "📱 Enter the app package name for the custom script: " + Style.RESET_ALL).strip()
-    if app_package:
-        cmd = f'frida -U -f {app_package} -l "{script_path}"'
-        print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
-        open_new_terminal(cmd)
-    else:
-        print(Fore.RED + "❌ Invalid package name. Exiting." + Style.RESET_ALL)
+    global target_app
+    if not target_app:
+        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
+            return
+    app_package = target_app
+    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
+    cmd = f'frida -U -f {app_package} -l "{script_path}"'
+    print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
+    open_new_terminal(cmd)
 
 def auto_fridump():
-    """
-    Automatically dumps the memory of a specified process using Frida.
-    Utilizes 'frida-ps -Uia' to list applications and select a PID.
-    """
     SESSION_FILE = "fridump_session.json"
 
-    # ---------------------
-    # Session Management
-    # ---------------------
     def load_session(filepath):
         if not os.path.isfile(filepath):
             return {"dumped_ranges": {}, "skipped_ranges": {}}
@@ -885,9 +907,6 @@ def auto_fridump():
         except Exception as e:
             print(f"Error saving session: {e}")
 
-    # ---------------------
-    # Utility Functions
-    # ---------------------
     def print_progress(current, total, prefix='Progress:', bar_length=50):
         filled_length = int(bar_length * current // total)
         bar = '#' * filled_length + '-' * (bar_length - filled_length)
@@ -911,7 +930,7 @@ def auto_fridump():
                     except:
                         continue
 
-    def get_emulator_ip():
+    def get_emulator_ip_inner():
         try:
             output = subprocess.check_output(["adb", "shell", "ip", "addr"], universal_newlines=True)
             match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/', output)
@@ -930,14 +949,11 @@ def auto_fridump():
             sys.exit(1)
 
     def run_frida_ps():
-        """
-        Runs 'frida-ps -Uia' to list all applications and returns a list of (PID, App Name) tuples.
-        """
         try:
             result = subprocess.run(["frida-ps", "-Uia"], capture_output=True, text=True, check=True)
             lines = result.stdout.strip().split('\n')
             apps = []
-            for line in lines[1:]:  # Skip header
+            for line in lines[1:]:
                 parts = line.split(None, 1)
                 if len(parts) == 2 and parts[0].isdigit():
                     pid = int(parts[0])
@@ -951,15 +967,11 @@ def auto_fridump():
             print(Fore.RED + "[-] 'frida-ps' not found. Please ensure Frida is installed and added to PATH." + Style.RESET_ALL)
             sys.exit(1)
 
-    # ---------------------
-    # Memory Dump Functions
-    # ---------------------
     def dump_memory(agent, base, size, directory, max_size=20971520):
         def dump_to_file(addr, sz, fname):
             data = agent.readmemory(addr, sz)
             with open(os.path.join(directory, fname), 'wb') as f:
                 f.write(data)
-
         if size > max_size:
             for i in range(0, size, max_size):
                 chunk_size = min(max_size, size - i)
@@ -967,26 +979,19 @@ def auto_fridump():
         else:
             dump_to_file(base, size, f"{hex(base)}_dump.data")
 
-    # ---------------------
-    # Automatic Memory Dump Process
-    # ---------------------
     def run_auto_dump():
-        # Load session data
         session = load_session(SESSION_FILE)
         dumped = session["dumped_ranges"]
         skipped = session["skipped_ranges"]
 
-        # Get emulator IP
-        ip = get_emulator_ip()
+        ip = get_emulator_ip_inner()
         if not ip:
             print(Fore.RED + "[-] Unable to obtain emulator IP via ADB." + Style.RESET_ALL)
             sys.exit(1)
         print(Fore.GREEN + f"[*] Detected emulator IP: {ip}" + Style.RESET_ALL)
 
-        # Set up ADB port forwarding
         adb_forward()
 
-        # Connect to remote device
         host = "127.0.0.1:27042"
         try:
             device_manager = frida.get_device_manager()
@@ -996,7 +1001,6 @@ def auto_fridump():
             print(Fore.RED + f"[-] Error connecting to remote device: {e}" + Style.RESET_ALL)
             sys.exit(1)
 
-        # Enumerate running processes using 'frida-ps -Uia'
         apps = run_frida_ps()
         if not apps:
             print(Fore.YELLOW + "⚠️ No applications found." + Style.RESET_ALL)
@@ -1008,7 +1012,6 @@ def auto_fridump():
         for pid, app in apps:
             print("{:<10} {}".format(pid, app))
 
-        # User input for PID
         try:
             pid_input = input(Fore.CYAN + "\nEnter the PID of the process to dump: " + Style.RESET_ALL).strip()
             pid = int(pid_input)
@@ -1019,21 +1022,17 @@ def auto_fridump():
             print(Fore.RED + "[-] PID must be an integer." + Style.RESET_ALL)
             sys.exit(1)
 
-        # User input for memory permissions
         perms = input(Fore.CYAN + "Enter memory permissions to dump (default 'rw-'): " + Style.RESET_ALL).strip()
         if not perms:
             perms = "rw-"
         perms_list = [p.strip() for p in perms.split(',')]
 
-        # User input for running 'strings'
         strings_flag = input(Fore.CYAN + "Do you want to run 'strings' on dumped files? (y/n, default n): " + Style.RESET_ALL).strip().lower() == 'y'
 
-        # Set output directory
         output_dir = os.path.join(os.getcwd(), "dump")
         os.makedirs(output_dir, exist_ok=True)
         print(Fore.GREEN + f"[*] Output directory: {output_dir}" + Style.RESET_ALL)
 
-        # Attach to the target process
         try:
             session_frida = device.attach(pid)
             print(Fore.GREEN + f"[*] Attached to process PID: {pid}" + Style.RESET_ALL)
@@ -1047,7 +1046,6 @@ def auto_fridump():
             print(Fore.RED + f"[-] Unexpected error: {e}" + Style.RESET_ALL)
             sys.exit(1)
 
-        # Load Frida script
         script_code = """
         'use strict';
         rpc.exports = {
@@ -1068,7 +1066,6 @@ def auto_fridump():
             print(Fore.RED + f"[-] Error loading Frida script: {e}" + Style.RESET_ALL)
             sys.exit(1)
 
-        # Enumerate memory regions
         all_ranges = []
         for p in perms_list:
             try:
@@ -1082,18 +1079,15 @@ def auto_fridump():
             print(Fore.YELLOW + "⚠️ No memory regions found with the specified permissions." + Style.RESET_ALL)
             sys.exit(0)
 
-        # Remove duplicate regions and sort
         unique_ranges = {r['base']: r for r in all_ranges}.values()
         sorted_ranges = sorted(unique_ranges, key=lambda x: x['base'])
 
         print(Fore.GREEN + f"[*] Total unique memory regions to dump: {len(sorted_ranges)}" + Style.RESET_ALL)
 
-        # Start memory dumping
         for idx, region in enumerate(sorted_ranges, 1):
             base = region['base']
             size = region['size']
 
-            # Ensure base is an integer
             if isinstance(base, str):
                 try:
                     base_int = int(base, 16)
@@ -1129,7 +1123,6 @@ def auto_fridump():
                 print(Fore.RED + f"[-] Error dumping region {base_str}: {e}" + Style.RESET_ALL)
             print_progress(idx, len(sorted_ranges))
 
-        # Run 'strings' if requested
         if strings_flag:
             print(Fore.GREEN + "[*] Running 'strings' on dumped files..." + Style.RESET_ALL)
             run_strings(output_dir)
@@ -1138,20 +1131,14 @@ def auto_fridump():
         print(Fore.GREEN + "[*] Memory dump completed." + Style.RESET_ALL)
         print(Fore.GREEN + f"[*] Session data saved in '{SESSION_FILE}'." + Style.RESET_ALL)
 
-    # Call the run_auto_dump function to execute the dumping process
     run_auto_dump()
 
 def install_drozer_agent():
-    """
-    Download the latest Drozer Agent APK from GitHub and install it automatically
-    on the connected emulator/device via adb.
-    """
     global adb_command, device_serial
     if adb_command is None or not device_serial:
         print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot install Drozer Agent." + Style.RESET_ALL)
         return
 
-    # Retrieve the latest release info from GitHub
     print(Fore.CYAN + "🔎 Checking latest Drozer Agent release..." + Style.RESET_ALL)
     try:
         response = requests.get("https://api.github.com/repos/WithSecureLabs/drozer-agent/releases/latest", timeout=15)
@@ -1160,7 +1147,6 @@ def install_drozer_agent():
         assets = release_data.get("assets", [])
         apk_url = None
 
-        # Find an asset that looks like an .apk
         for asset in assets:
             if asset["browser_download_url"].endswith(".apk"):
                 apk_url = asset["browser_download_url"]
@@ -1179,7 +1165,6 @@ def install_drozer_agent():
                     f.write(chunk)
         print(Fore.GREEN + "✅ Drozer Agent APK downloaded successfully." + Style.RESET_ALL)
 
-        # Now install the APK using adb
         install_command = f'install -r "{apk_filename}"'
         print(Fore.CYAN + "📦 Installing Drozer Agent APK on the device..." + Style.RESET_ALL)
         result = run_adb_command(install_command)
@@ -1188,7 +1173,6 @@ def install_drozer_agent():
         else:
             print(Fore.RED + "❌ Installation failed. Check adb logs for details." + Style.RESET_ALL)
 
-        # Cleanup local file if desired
         try:
             os.remove(apk_filename)
         except Exception:
@@ -1198,16 +1182,10 @@ def install_drozer_agent():
         print(Fore.RED + f"❌ An error occurred while downloading or installing Drozer Agent: {e}" + Style.RESET_ALL)
 
 def start_drozer_forwarding():
-    """
-    Forward port 31415 on the local machine to port 31415 on the device/emulator
-    (i.e., adb forward tcp:31415 tcp:31415).
-    """
     global adb_command, device_serial
     if adb_command is None or not device_serial:
         print(Fore.RED + "❌ ADB command unavailable or no device selected. Cannot forward Drozer port." + Style.RESET_ALL)
         return
-
-    # Perform the forwarding
     result = run_adb_command("forward tcp:31415 tcp:31415")
     if result and result.returncode == 0:
         print(Fore.GREEN + "✅ ADB forward set up: 31415 -> 31415" + Style.RESET_ALL)
@@ -1215,23 +1193,19 @@ def start_drozer_forwarding():
         print(Fore.RED + "❌ Failed to set up port forwarding. Check adb logs for details." + Style.RESET_ALL)
 
 def scan_gmaps(apikey):
-    
     vulnerable_services = []
     separator = "-" * 60
 
-    # Minimal header
     print("\n" + separator)
     print(f"{Fore.CYAN}Starting Google Maps API scan...{Style.RESET_ALL}")
     print(separator)
     
-    # Helper to color the status code: green for 200/302, red otherwise.
     def colored_status(status):
         if status in [200, 302]:
             return f"{Fore.GREEN}{status}{Style.RESET_ALL}"
         else:
             return f"{Fore.RED}{status}{Style.RESET_ALL}"
     
-    # Helper for GET endpoints with improved UI
     def test_get(service_name, url, vulnerability_condition):
         try:
             response = requests.get(url, verify=False)
@@ -1259,7 +1233,6 @@ def scan_gmaps(apikey):
             vulnerable_services.append(service_name)
         return vulnerable
 
-    # Helper for POST endpoints with improved UI
     def test_post(service_name, url, postdata, headers, vulnerability_condition):
         try:
             response = requests.post(url, data=postdata, verify=False, headers=headers)
@@ -1287,7 +1260,6 @@ def scan_gmaps(apikey):
             vulnerable_services.append(service_name)
         return vulnerable
 
-    # --- Vulnerability condition functions ---
     def no_error_condition(response):
         if response.status_code != 200:
             return False, f"HTTP {response.status_code} received."
@@ -1345,7 +1317,6 @@ def scan_gmaps(apikey):
         except Exception as e:
             return False, str(e)
     
-    # --- Endpoints testing ---
     test_get("Static Maps API",
              "https://maps.googleapis.com/maps/api/staticmap?center=45%2C10&zoom=7&size=400x400&key=" + apikey,
              static_maps_condition)
@@ -1440,7 +1411,6 @@ def scan_gmaps(apikey):
     print("https://cloud.google.com/maps-platform/pricing")
     print("https://developers.google.com/maps/billing/gmp-billing")
     
-    # Automatically generate the JavaScript API test file
     js_filename = "jsapi_test.html"
     js_content = (
         '<!DOCTYPE html><html><head>'
@@ -1484,7 +1454,6 @@ def apk_keys_testing_menu_loop():
             print("Invalid choice, please try again.")
 
 def show_drozer_menu():
-    """Display the Drozer menu."""
     print("\n" + "=" * 50)
     print(f"{'Drozer':^50}")
     print("=" * 50)
@@ -1493,7 +1462,6 @@ def show_drozer_menu():
     print("3. ↩️  Back")
 
 def drozer_menu_loop():
-    """Loop for the Drozer menu."""
     while True:
         show_drozer_menu()
         choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
@@ -1507,7 +1475,6 @@ def drozer_menu_loop():
             print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
 
 def show_run_tools_menu():
-    """Display the Run Tools submenu."""
     print("\n" + "=" * 50)
     print(f"{'Run Tools':^50}")
     print("=" * 50)
@@ -1517,7 +1484,6 @@ def show_run_tools_menu():
     print("4. ↩️  Back")
 
 def show_emulator_options_menu():
-    """Display the Emulator Options submenu."""
     print("\n" + "=" * 50)
     print(f"{'Emulator Options':^50}")
     print("=" * 50)
@@ -1530,9 +1496,7 @@ def show_emulator_options_menu():
     print("7. ❌  Remove proxy")
     print("8. ↩️  Back")
 
-
 def show_frida_menu():
-    """Display the Frida submenu."""
     print("\n" + "=" * 50)
     print(f"{'Frida':^50}")
     print("=" * 50)
@@ -1546,6 +1510,10 @@ def show_frida_menu():
     print("8. 📝  Run Custom Script")
     print("9. ↩️  Back")
 
+# ============================================================
+#  Main Menu (Set Target is now first)
+# ============================================================
+
 def show_main_menu():
     print(Fore.CYAN + r"""
     __________       ________               .__    .___
@@ -1557,15 +1525,16 @@ def show_main_menu():
     """ + Style.RESET_ALL)
     print(Fore.GREEN + "Welcome to the Redroid Tool!" + Style.RESET_ALL)
     print("=" * 50)
-    print("1. 🚀  Run Tools")
-    print("2. 🎮  Emulator Options")
-    print("3. 🕵️  Frida")
-    print("4. 🏹  Drozer")
-    print("5. 🔑  APK Keys Testing")
-    print("6. ❌  Exit")
+    print("1. 🎯  Set Target")
+    print("2. 🚀  Run Tools")
+    print("3. 🎮  Emulator Options")
+    print("4. 🕵️  Frida")
+    print("5. 🏹  Drozer")
+    print("6. 🔑  APK Keys Testing")
+    print("7. ❌  Exit")
 
 def main():
-    global emulator_type, emulator_installation_path, adb_command, device_serial
+    global emulator_type, emulator_installation_path, adb_command, device_serial, target_app
 
     emulator_type, emulator_installation_path = detect_emulator()
     if emulator_type:
@@ -1575,10 +1544,8 @@ def main():
 
     adb_command = get_adb_command(emulator_type, emulator_installation_path)
 
-    # -------------------------------
     if emulator_type == 'Nox' and adb_command:
         connect_nox_adb_ports(adb_command)
-    # -------------------------------
 
     devices = get_connected_devices(adb_command)
     if not devices:
@@ -1603,6 +1570,8 @@ def main():
         show_main_menu()
         main_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
         if main_choice == '1':
+            set_target_app()
+        elif main_choice == '2':
             while True:
                 show_run_tools_menu()
                 run_tools_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
@@ -1616,12 +1585,12 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-        elif main_choice == '2':
+        elif main_choice == '3':
             while True:
                 show_emulator_options_menu()
                 emulator_choice = input(Fore.CYAN + "🕹️ Enter your choice: " + Style.RESET_ALL).strip()
                 if emulator_choice == '1':
-                    remove_ads_and_bloatware()
+                    print(Fore.YELLOW + "Remove Ads and Bloatware functionality not implemented." + Style.RESET_ALL)
                 elif emulator_choice == '2':
                     run_android_studio_emulator()
                 elif emulator_choice == '3':
@@ -1661,7 +1630,7 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-        elif main_choice == '3':
+        elif main_choice == '4':
             while True:
                 show_frida_menu()
                 frida_choice = input(Fore.CYAN + "🕵️ Enter your choice: " + Style.RESET_ALL).strip()
@@ -1685,16 +1654,15 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-        elif main_choice == '4':
-            # Drozer menu
-            drozer_menu_loop()
         elif main_choice == '5':
-            apk_keys_testing_menu_loop()
+            drozer_menu_loop()
         elif main_choice == '6':
+            apk_keys_testing_menu_loop()
+        elif main_choice == '7':
             print(Fore.GREEN + "Exiting... Have a great day!" + Style.RESET_ALL)
             break
         else:
-            print(Fore.RED + "Invalid choice, please try again." + Style.RESET_ALL)
+            print(Fore.RED + "❌ Invalid choice, please try again." + Style.RESET_ALL)
 
 if __name__ == "__main__":
     try:

@@ -11,12 +11,15 @@ import shlex
 import ctypes
 import time
 from platform import system
+import warnings
+import requests
+from colorama import Fore, Style
+warnings.filterwarnings("ignore")
 
 # External library
 import frida
 import json
 import psutil
-import requests
 from requests.exceptions import ConnectionError
 from bs4 import BeautifulSoup
 from colorama import init, Fore, Style
@@ -151,16 +154,6 @@ def get_local_ipv4_addresses():
     return ip_dict
 
 def try_download_certificate(ip, port):
-    """Download the certificate from a given URL (using the provided IP and port)
-    and install it on the device via adb.
-
-    If the certificate file (renamed) already exists in the current directory,
-    skip the remote download and proceed directly to the push phase.
-
-    If pushing the certificate fails due to the filesystem being read-only,
-    the script automatically executes 'adb root' and 'adb remount' (waiting 5 seconds),
-    then retries. If the issue persists, the user is asked whether to reboot the device.
-    """
     input_der_file = "cacert.der"
     output_file = "9a5ba575.0"
 
@@ -345,78 +338,123 @@ def open_new_terminal(cmd):
     except Exception as e:
         print(Fore.RED + f"❌ Failed to open a new terminal: {e}" + Style.RESET_ALL)
 
-def run_mobfs():
-    """
-    1) Checks if this is an Android Studio emulator (emulator_type=='AndroidStudio') and if device_serial is set.
-    2) Verifies if Docker is installed.
-    3) Prints local IP addresses and asks the user for the Burp proxy IP and port.
-    4) Asks whether to configure the global proxy as HTTP or HTTPS.
-    5) Removes any pre-existing 'mobsf' container.
-    6) Runs 'docker run' (MobSF) in a new terminal, providing the necessary environment variables for proxy configuration.
-    7) Sets the chosen proxy (http_proxy or https_proxy) on the emulator.
-    """
-    global emulator_type, device_serial
+def run_mobsf():
+    global emulator_type, device_serial, adb_command
 
-    # 1) Check if we're on an Android Studio emulator and have a valid device_serial
-    if emulator_type != 'AndroidStudio' or not device_serial:
-        print(Fore.RED + "❌ No active Android Studio emulator detected, or missing device_serial." + Style.RESET_ALL)
-        return
-    print(Fore.GREEN + f"✅ Android Studio emulator detected, device_serial: {device_serial}" + Style.RESET_ALL)
-
-    # 2) Verify Docker installation
+    # 0) Verify Docker installation
     if not shutil.which("docker"):
         print(Fore.RED + "❌ Docker is not installed or not in the PATH." + Style.RESET_ALL)
         return
 
-    # 3) Print local IP addresses and ask for the proxy settings
-    print("\n" + Fore.GREEN + "===== Local IP Addresses =====" + Style.RESET_ALL)
-    ip_dict = get_local_ipv4_addresses()
-    print("{:<20} {:<15}".format("Interface", "IP Address"))
-    print("-" * 35)
-    for iface, ip_addr in ip_dict.items():
-        print("{:<20} {:<15}".format(iface, ip_addr))
+    # --- Header ---
+    print("\n" + "=" * 50)
+    print(f"{Fore.MAGENTA}=== MobSF Setup ==={Style.RESET_ALL}")
+    print("=" * 50)
 
-    user_ip = input(Fore.CYAN + "\n📝 Enter the proxy IP (e.g., 192.168.0.100): " + Style.RESET_ALL).strip()
-    user_port = input(Fore.CYAN + "📝 Enter the proxy port (e.g., 8080): " + Style.RESET_ALL).strip()
-    if not user_ip or not user_port.isdigit():
-        print(Fore.RED + "❌ Invalid IP or port. Aborting configuration." + Style.RESET_ALL)
+    # --- 1) Ask about emulator usage ---
+    print(f"\n{Fore.CYAN}Do you want to connect MobSF to an emulator?{Style.RESET_ALL}")
+    devices = get_connected_devices(adb_command)  # returns list of device serials
+
+    if devices:
+        # Choose a default emulator: if "emulator-5554" exists, use it; otherwise, use the first one.
+        default_emulator = "emulator-5554" if "emulator-5554" in devices else devices[0]
+        print(f"1. Use detected emulator ({default_emulator})")
+    else:
+        print("No emulator running detected.")
+
+    print("2. Specify a custom device ID (e.g., emulator-5554 or adb_ip:adb_port)")
+    print("3. Do not use any emulator")
+    emu_choice = input("Enter your choice (1/2/3): ").strip()
+
+    if emu_choice == "1":
+        if devices:
+            # If only one device is detected, select it automatically.
+            if len(devices) == 1:
+                device_serial = devices[0]
+            else:
+                # If multiple devices are detected, use the default as determined above.
+                device_serial = default_emulator
+                # Also, give the user a chance to review the full list.
+                print(f"\n{Fore.GREEN}Detected devices:{Style.RESET_ALL}")
+                for idx, dev in enumerate(devices, 1):
+                    print(f"  {idx}. {dev}")
+                use_default = input(f"Default '{default_emulator}' will be used. Do you want to use it? (y/n): ").strip().lower()
+                if use_default not in ["y", "yes"]:
+                    try:
+                        choice = int(input("Enter the number of the device you want to use: ").strip())
+                        device_serial = devices[choice - 1]
+                    except Exception:
+                        print(Fore.RED + "❌ Invalid choice. Aborting." + Style.RESET_ALL)
+                        return
+        else:
+            print(Fore.RED + "❌ No detected emulator. Please choose option 2 or 3." + Style.RESET_ALL)
+            return
+    elif emu_choice == "2":
+        custom_id = input("Enter the custom device ID (e.g., emulator-5554): ").strip()
+        if custom_id:
+            device_serial = custom_id
+        else:
+            print(Fore.RED + "❌ Invalid device ID. Aborting." + Style.RESET_ALL)
+            return
+    elif emu_choice == "3":
+        device_serial = None
+        print(Fore.GREEN + "Proceeding without connecting to an emulator." + Style.RESET_ALL)
+    else:
+        print(Fore.RED + "❌ Invalid choice. Aborting." + Style.RESET_ALL)
         return
 
-    # 4) Ask if user wants HTTP or HTTPS as global proxy
-    proxy_type = input(Fore.CYAN + "\nDo you want to configure 'http' or 'https' as the global emulator proxy? (default: http): " + Style.RESET_ALL).strip().lower()
-    if proxy_type not in ["http", "https"]:
-        proxy_type = "http"
+    # --- 2) Ask about custom proxy usage ---
+    custom_proxy_choice = input(f"\n{Fore.CYAN}Do you want to use a custom proxy for MobSF? (y/n): {Style.RESET_ALL}").strip().lower()
+    if custom_proxy_choice in ["y", "yes"]:
+        # Show the local IP table only if custom proxy is desired.
+        print("\n" + Fore.GREEN + "===== Local IP Addresses =====" + Style.RESET_ALL)
+        ip_dict = get_local_ipv4_addresses()
+        header = f"{'Interface':<30} {'IP Address':<20}"
+        print(header)
+        print("-" * len(header))
+        for iface, ip_addr in ip_dict.items():
+            print(f"{iface:<30} {ip_addr:<20}")
+        user_ip = input(f"\n{Fore.CYAN}Enter the proxy IP (e.g., 192.168.0.100): {Style.RESET_ALL}").strip()
+        user_port = input(f"{Fore.CYAN}Enter the proxy port (e.g., 8080): {Style.RESET_ALL}").strip()
+        if not user_ip or not user_port.isdigit():
+            print(Fore.RED + "❌ Invalid proxy IP or port. Aborting configuration." + Style.RESET_ALL)
+            return
+        use_proxy = True
+        # If an emulator is used, ask if its global proxy should be configured.
+        if device_serial:
+            proxy_type = input(f"{Fore.CYAN}Configure global proxy on emulator as 'http' or 'https'? (default: http): {Style.RESET_ALL}").strip().lower()
+            if proxy_type not in ["http", "https"]:
+                proxy_type = "http"
+    else:
+        use_proxy = False
 
-    # 5) Remove any existing 'mobsf' container
-    print(Fore.YELLOW + "🔄 Removing any existing 'mobsf' container..." + Style.RESET_ALL)
+    # --- 3) Remove any existing 'mobsf' container ---
+    print(f"\n{Fore.YELLOW}Removing any existing 'mobsf' container...{Style.RESET_ALL}")
     subprocess.run("docker rm -f mobsf", shell=True, capture_output=True)
 
-    # 6) Launch docker run in a new terminal
-    docker_cmd = (
-        f'docker run -it --name mobsf '
-        f'-p 8000:8000 -p 1337:1337 '
-        f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
-        f'-e MOBSF_PROXY_IP="{user_ip}" '
-        f'-e MOBSF_PROXY_PORT="{user_port}" '
-        f'opensecurity/mobile-security-framework-mobsf:latest'
-    )
-    print(Fore.CYAN + "\n🔄 Launching MobSF (docker run) in a new terminal:\n" + Style.RESET_ALL + docker_cmd)
+    # --- 4) Build docker run command ---
+    docker_cmd = 'docker run -it --name mobsf -p 8000:8000 -p 1337:1337 '
+    if device_serial:
+        docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
+    if use_proxy:
+        docker_cmd += f'-e MOBSF_PROXY_IP="{user_ip}" -e MOBSF_PROXY_PORT="{user_port}" '
+    docker_cmd += 'opensecurity/mobile-security-framework-mobsf:latest'
+
+    print(f"\n{Fore.CYAN}Launching MobSF container with the following command:{Style.RESET_ALL}")
+    print(docker_cmd)
     open_new_terminal(docker_cmd)
 
-    # 7) Set the global proxy on the emulator
-    settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"
-    print(Fore.CYAN + f"\n🔗 Setting global {settings_key}: {user_ip}:{user_port}" + Style.RESET_ALL)
-    adb_cmd = f'adb -s {device_serial} shell settings put global {settings_key} {user_ip}:{user_port}'
-
-    try:
-        subprocess.run(adb_cmd, shell=True, check=True)
-        print(Fore.GREEN + f"✅ {settings_key} configured on emulator: {user_ip}:{user_port}" + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
-        print(Fore.RED + f"❌ Failed to set {settings_key} on emulator. Error: {e}" + Style.RESET_ALL)
+    # --- 5) If emulator is used and custom proxy is set, configure the emulator's global proxy ---
+    if device_serial and use_proxy:
+        settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"
+        adb_cmd = f'adb -s {device_serial} shell settings put global {settings_key} {user_ip}:{user_port}'
+        try:
+            subprocess.run(adb_cmd, shell=True, check=True)
+            print(Fore.GREEN + f"✅ Global {settings_key} set to {user_ip}:{user_port} on emulator {device_serial}." + Style.RESET_ALL)
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Failed to set global {settings_key} on emulator. Error: {e}" + Style.RESET_ALL)
 
     print(Fore.GREEN + "\n✅ Setup complete! The MobSF container is starting in a separate window." + Style.RESET_ALL)
-    print(Fore.GREEN + f"The emulator now uses {settings_key} = {user_ip}:{user_port} (if supported by your Android image)." + Style.RESET_ALL)
-    print(Fore.GREEN + "To stop MobSF, close the new terminal window or run: docker stop mobsf.\n" + Style.RESET_ALL)
 
 def run_nuclei_against_apk():
     """Decompiles an APK, runs nuclei with templates, and optionally saves output.
@@ -1176,6 +1214,275 @@ def start_drozer_forwarding():
     else:
         print(Fore.RED + "❌ Failed to set up port forwarding. Check adb logs for details." + Style.RESET_ALL)
 
+def scan_gmaps(apikey):
+    
+    vulnerable_services = []
+    separator = "-" * 60
+
+    # Minimal header
+    print("\n" + separator)
+    print(f"{Fore.CYAN}Starting Google Maps API scan...{Style.RESET_ALL}")
+    print(separator)
+    
+    # Helper to color the status code: green for 200/302, red otherwise.
+    def colored_status(status):
+        if status in [200, 302]:
+            return f"{Fore.GREEN}{status}{Style.RESET_ALL}"
+        else:
+            return f"{Fore.RED}{status}{Style.RESET_ALL}"
+    
+    # Helper for GET endpoints with improved UI
+    def test_get(service_name, url, vulnerability_condition):
+        try:
+            response = requests.get(url, verify=False)
+        except Exception as e:
+            print(f"{Fore.YELLOW}[{service_name}]{Style.RESET_ALL}")
+            print(f" URL    : {Fore.CYAN}{url}{Style.RESET_ALL}")
+            print(f" Status : {Fore.RED}Error: {e}{Style.RESET_ALL}")
+            print(separator)
+            return False
+
+        status_colored = colored_status(response.status_code)
+        vulnerable, reason = vulnerability_condition(response)
+        
+        print(f"{Fore.YELLOW}[{service_name}]{Style.RESET_ALL}")
+        print(f" URL    : {Fore.CYAN}{url}{Style.RESET_ALL}")
+        print(f" Status : {status_colored}")
+        if vulnerable:
+            print(f" Result : {Fore.GREEN}VULNERABLE{Style.RESET_ALL}")
+        else:
+            print(f" Result : {Fore.RED}Not Vulnerable{Style.RESET_ALL}")
+        print(f" Details: {reason}")
+        print(separator)
+        
+        if vulnerable:
+            vulnerable_services.append(service_name)
+        return vulnerable
+
+    # Helper for POST endpoints with improved UI
+    def test_post(service_name, url, postdata, headers, vulnerability_condition):
+        try:
+            response = requests.post(url, data=postdata, verify=False, headers=headers)
+        except Exception as e:
+            print(f"{Fore.YELLOW}[{service_name}]{Style.RESET_ALL}")
+            print(f" URL    : {Fore.CYAN}{url}{Style.RESET_ALL}")
+            print(f" Status : {Fore.RED}Error: {e}{Style.RESET_ALL}")
+            print(separator)
+            return False
+
+        status_colored = colored_status(response.status_code)
+        vulnerable, reason = vulnerability_condition(response)
+        
+        print(f"{Fore.YELLOW}[{service_name}]{Style.RESET_ALL}")
+        print(f" URL    : {Fore.CYAN}{url}{Style.RESET_ALL}")
+        print(f" Status : {status_colored}")
+        if vulnerable:
+            print(f" Result : {Fore.GREEN}VULNERABLE{Style.RESET_ALL}")
+        else:
+            print(f" Result : {Fore.RED}Not Vulnerable{Style.RESET_ALL}")
+        print(f" Details: {reason}")
+        print(separator)
+        
+        if vulnerable:
+            vulnerable_services.append(service_name)
+        return vulnerable
+
+    # --- Vulnerability condition functions ---
+    def no_error_condition(response):
+        if response.status_code != 200:
+            return False, f"HTTP {response.status_code} received."
+        try:
+            data = response.json()
+            if ("error_message" not in data) and ("errorMessage" not in data):
+                return True, "No error message found."
+            else:
+                err = data.get("error_message") or data.get("errorMessage")
+                return False, f"Error: {err}"
+        except Exception as e:
+            return False, str(e)
+    
+    def static_maps_condition(response):
+        if response.status_code == 200:
+            return True, "HTTP 200 received."
+        elif b"PNG" in response.content:
+            return False, "PNG content returned."
+        else:
+            return False, f"Response: {response.content.decode(errors='ignore')}"
+    
+    def street_view_condition(response):
+        if response.status_code == 200:
+            return True, "HTTP 200 received."
+        elif b"PNG" in response.content:
+            return False, "PNG content returned."
+        else:
+            return False, f"Response: {response.content.decode(errors='ignore')}"
+    
+    def places_photo_condition(response):
+        if response.status_code == 302:
+            return True, "HTTP 302 (redirect) received."
+        else:
+            return False, "No redirect."
+    
+    def fcm_condition(response):
+        if response.status_code == 200:
+            return True, "HTTP 200 received."
+        else:
+            try:
+                data = response.json()
+                return False, f"Error: {data.get('error', 'Unknown error')}"
+            except:
+                return False, response.text
+
+    def nearest_roads_condition(response):
+        if response.status_code != 200:
+            return False, f"HTTP {response.status_code} received."
+        try:
+            data = response.json()
+            if "error" not in data:
+                return True, "No error returned."
+            else:
+                return False, data["error"].get("message", "Error returned.")
+        except Exception as e:
+            return False, str(e)
+    
+    # --- Endpoints testing ---
+    test_get("Static Maps API",
+             "https://maps.googleapis.com/maps/api/staticmap?center=45%2C10&zoom=7&size=400x400&key=" + apikey,
+             static_maps_condition)
+    
+    test_get("Street View API",
+             "https://maps.googleapis.com/maps/api/streetview?size=400x400&location=40.720032,-73.988354&fov=90&heading=235&pitch=10&key=" + apikey,
+             street_view_condition)
+    
+    test_get("Directions API",
+             "https://maps.googleapis.com/maps/api/directions/json?origin=Disneyland&destination=Universal+Studios+Hollywood4&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Geocoding API",
+             "https://maps.googleapis.com/maps/api/geocode/json?latlng=40,30&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Distance Matrix API",
+             ("https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=40.6655101,-73.89188969999998"
+              "&destinations=40.6905615%2C-73.9976592%7C40.6905615%2C-73.9976592%7C40.6905615%2C-73.9976592"
+              "%7C40.6905615%2C-73.9976592%7C40.6905615%2C-73.9976592%7C40.6905615%2C-73.9976592"
+              "%7C40.659569%2C-73.933783%7C40.729029%2C-73.851524%7C40.6860072%2C-73.6334271"
+              "%7C40.598566%2C-73.7527626%7C40.659569%2C-73.933783%7C40.729029%2C-73.851524"
+              "%7C40.6860072%2C-73.6334271%7C40.598566%2C-73.7527626&key=" + apikey),
+             no_error_condition)
+    
+    test_get("Find Place from Text API",
+             ("https://maps.googleapis.com/maps/api/place/findplacefromtext/json?"
+              "input=Museum%20of%20Contemporary%20Art%20Australia&inputtype=textquery&"
+              "fields=photos,formatted_address,name,rating,opening_hours,geometry&key=" + apikey),
+             no_error_condition)
+    
+    test_get("Autocomplete API",
+             "https://maps.googleapis.com/maps/api/place/autocomplete/json?input=Bingh&types=%28cities%29&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Elevation API",
+             "https://maps.googleapis.com/maps/api/elevation/json?locations=39.7391536,-104.9847034&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Timezone API",
+             "https://maps.googleapis.com/maps/api/timezone/json?location=39.6034810,-119.6822510&timestamp=1331161200&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Nearest Roads API",
+             "https://roads.googleapis.com/v1/nearestRoads?points=60.170880,24.942795|60.170879,24.942796|60.170877,24.942796&key=" + apikey,
+             nearest_roads_condition)
+    
+    test_post("Geolocation API",
+              "https://www.googleapis.com/geolocation/v1/geolocate?key=" + apikey,
+              postdata={'considerIp': 'true'},
+              headers={'Content-Type': 'application/json', 'Authorization': 'key=' + apikey},
+              vulnerability_condition=no_error_condition)
+    
+    test_get("Snap to Roads API",
+             "https://roads.googleapis.com/v1/snapToRoads?path=-35.27801,149.12958|-35.28032,149.12907&interpolate=true&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Speed Limits API",
+             "https://roads.googleapis.com/v1/speedLimits?path=38.75807927603043,-9.03741754643809&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Place Details API",
+             "https://maps.googleapis.com/maps/api/place/details/json?place_id=ChIJN1t_tDeuEmsRUsoyG83frY4&fields=name,rating,formatted_phone_number&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Nearby Search-Places API",
+             "https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=-33.8670522,151.1957362&radius=100&types=food&name=harbour&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Text Search-Places API",
+             "https://maps.googleapis.com/maps/api/place/textsearch/json?query=restaurants+in+Sydney&key=" + apikey,
+             no_error_condition)
+    
+    test_get("Places Photo API",
+             "https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=CnRtAAAATLZNl354RwP_9UKbQ_5Psy40texXePv4oAlgP4qNEkdIrkyse7rPXYGd9D_Uj1rVsQdWT4oRz4QrYAJNpFX7rzqqMlZw2h2E2y5IKMUZ7ouD_SlcHxYq1yL4KbKUv3qtWgTK0A6QbGh87GB3sscrHRIQiG2RrmU_jF4tENr9wGS_YxoUSSDrYjWmrNfeEHSGSc3FyhNLlBU&key=" + apikey,
+             places_photo_condition)
+    
+    test_post("FCM API",
+              "https://fcm.googleapis.com/fcm/send",
+              postdata="{'registration_ids':['ABC']}",
+              headers={'Content-Type': 'application/json', 'Authorization': 'key=' + apikey},
+              vulnerability_condition=fcm_condition)
+    
+    print("\n" + separator)
+    print(f"{Fore.CYAN}Scan Summary:{Style.RESET_ALL}")
+    if vulnerable_services:
+        for service in vulnerable_services:
+            print(f"- {service}")
+    else:
+        print("No vulnerable services detected.")
+    print("\nPricing references:")
+    print("https://cloud.google.com/maps-platform/pricing")
+    print("https://developers.google.com/maps/billing/gmp-billing")
+    
+    # Automatically generate the JavaScript API test file
+    js_filename = "jsapi_test.html"
+    js_content = (
+        '<!DOCTYPE html><html><head>'
+        '<script src="https://maps.googleapis.com/maps/api/js?key=' + apikey +
+        '&callback=initMap&libraries=&v=weekly" defer></script>'
+        '<style type="text/css">#map{height:100%;}html,body{height:100%;margin:0;padding:0;}</style>'
+        '<script>function initMap(){var map=new google.maps.Map(document.getElementById("map"),'
+        '{center:{lat:-34.397,lng:150.644},zoom:8});}</script>'
+        '</head><body><div id="map"></div></body></html>'
+    )
+    try:
+        with open(js_filename, "w+") as f:
+            f.write(js_content)
+        print(f"\nJS API test file '{js_filename}' generated automatically.")
+        print("Open it in your browser to verify the JavaScript API functionality.")
+    except Exception as e:
+        print(f"Error generating JS API test file: {e}")
+    
+    return True
+
+def show_apk_keys_testing_menu():
+    print("\n" + "=" * 50)
+    print(f"{'APK Keys Testing':^50}")
+    print("=" * 50)
+    print("1. 🔑  Google Maps API")
+    print("2. ↩️  Back")
+
+def apk_keys_testing_menu_loop():
+    while True:
+        show_apk_keys_testing_menu()
+        choice = input(Fore.CYAN + "Enter your choice: " + Style.RESET_ALL).strip()
+        if choice == '1':
+            apikey = input("Please enter the Google Maps API key to test: ").strip()
+            if apikey:
+                scan_gmaps(apikey)
+            else:
+                print("Invalid API key. Please try again.")
+        elif choice == '2':
+            break
+        else:
+            print("Invalid choice, please try again.")
+
 def show_drozer_menu():
     """Display the Drozer menu."""
     print("\n" + "=" * 50)
@@ -1240,7 +1547,6 @@ def show_frida_menu():
     print("9. ↩️  Back")
 
 def show_main_menu():
-    """Display the main menu."""
     print(Fore.CYAN + r"""
     __________       ________               .__    .___
     \______   \ ____ \______ \_______  ____ |__| __| _/
@@ -1251,15 +1557,14 @@ def show_main_menu():
     """ + Style.RESET_ALL)
     print(Fore.GREEN + "Welcome to the Redroid Tool!" + Style.RESET_ALL)
     print("=" * 50)
-    # Sezione "Install Tools" rimossa
     print("1. 🚀  Run Tools")
     print("2. 🎮  Emulator Options")
     print("3. 🕵️  Frida")
     print("4. 🏹  Drozer")
-    print("5. ❌  Exit")
+    print("5. 🔑  APK Keys Testing")
+    print("6. ❌  Exit")
 
 def main():
-    """Main function to run the tool."""
     global emulator_type, emulator_installation_path, adb_command, device_serial
 
     emulator_type, emulator_installation_path = detect_emulator()
@@ -1302,7 +1607,7 @@ def main():
                 show_run_tools_menu()
                 run_tools_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
                 if run_tools_choice == '1':
-                    run_mobfs()
+                    run_mobsf()
                 elif run_tools_choice == '2':
                     run_nuclei_against_apk()
                 elif run_tools_choice == '3':
@@ -1384,14 +1689,16 @@ def main():
             # Drozer menu
             drozer_menu_loop()
         elif main_choice == '5':
-            print(Fore.GREEN + "👋 Exiting... Have a great day!" + Style.RESET_ALL)
+            apk_keys_testing_menu_loop()
+        elif main_choice == '6':
+            print(Fore.GREEN + "Exiting... Have a great day!" + Style.RESET_ALL)
             break
         else:
-            print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+            print(Fore.RED + "Invalid choice, please try again." + Style.RESET_ALL)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(Fore.RED + "\n\n❌ Graceful shutdown initiated. Goodbye! 🚪" + Style.RESET_ALL)
+        print(Fore.RED + "\n\nGraceful shutdown initiated. Goodbye!" + Style.RESET_ALL)
         sys.exit(0)

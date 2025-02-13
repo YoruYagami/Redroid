@@ -1580,50 +1580,49 @@ def main():
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
-
-elif main_choice == '3':
-    while True:
-        show_emulator_options_menu()
-        emulator_choice = input(Fore.CYAN + "🕹️ Enter your choice: " + Style.RESET_ALL).strip()
-        if emulator_choice == '1':
-            print(Fore.YELLOW + "Remove Ads and Bloatware functionality not implemented." + Style.RESET_ALL)
-        elif emulator_choice == '2':
-            port = input(Fore.CYAN + "📝 Enter the Burp Suite port: " + Style.RESET_ALL).strip()
-            if port.isdigit():
-                install_burpsuite_certificate(int(port))
-            else:
-                print(Fore.RED + "❌ Invalid port. Enter a valid port number." + Style.RESET_ALL)
-        elif emulator_choice == '3':
-            if adb_command and device_serial:
-                subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
-            else:
-                print(Fore.RED + "❌ ADB shell not available (no device selected or on Android)." + Style.RESET_ALL)
-        elif emulator_choice == '4':
-            result = run_adb_command('shell settings get global http_proxy')
-            if result and result.stdout.strip():
-                print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + result.stdout.strip() + Style.RESET_ALL)
-            else:
-                print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
-        elif emulator_choice == '5':
-            ipv4_addresses = get_local_ipv4_addresses()
-            print("\n" + "{:<30} {:<15}".format("Interface", "IP Address"))
-            print("-" * 45)
-            for iface, ip in ipv4_addresses.items():
-                print(f"{iface:<30} {ip:<15}")
-            ip = input(Fore.CYAN + "📝 Enter the proxy IP address: " + Style.RESET_ALL).strip()
-            port = input(Fore.CYAN + "📝 Enter the proxy port: " + Style.RESET_ALL).strip()
-            if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip) and port.isdigit():
-                subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy {ip}:{port}', shell=True)
-                print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
-            else:
-                print(Fore.RED + "❌ Invalid IP address or port number." + Style.RESET_ALL)
-        elif emulator_choice == '6':
-            subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy :0', shell=True)
-            print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
-        elif emulator_choice == '7':
-            break
-        else:
-            print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
+        elif main_choice == '3':
+            while True:
+                show_emulator_options_menu()
+                emulator_choice = input(Fore.CYAN + "🕹️ Enter your choice: " + Style.RESET_ALL).strip()
+                if emulator_choice == '1':
+                    print(Fore.YELLOW + "Remove Ads and Bloatware functionality not implemented." + Style.RESET_ALL)
+                elif emulator_choice == '2':
+                    port = input(Fore.CYAN + "📝 Enter the Burp Suite port: " + Style.RESET_ALL).strip()
+                    if port.isdigit():
+                        install_burpsuite_certificate(int(port))
+                    else:
+                        print(Fore.RED + "❌ Invalid port. Enter a valid port number." + Style.RESET_ALL)
+                elif emulator_choice == '3':
+                    if adb_command and device_serial:
+                        subprocess.run(f'{adb_command} -s {device_serial} shell', shell=True)
+                    else:
+                        print(Fore.RED + "❌ ADB shell not available (no device selected or on Android)." + Style.RESET_ALL)
+                elif emulator_choice == '4':
+                    result = run_adb_command('shell settings get global http_proxy')
+                    if result and result.stdout.strip():
+                        print(Fore.CYAN + "🌐 Current proxy: " + Fore.GREEN + result.stdout.strip() + Style.RESET_ALL)
+                    else:
+                        print(Fore.YELLOW + "⚠️ No proxy is currently set." + Style.RESET_ALL)
+                elif emulator_choice == '5':
+                    ipv4_addresses = get_local_ipv4_addresses()
+                    print("\n" + "{:<30} {:<15}".format("Interface", "IP Address"))
+                    print("-" * 45)
+                    for iface, ip in ipv4_addresses.items():
+                        print(f"{iface:<30} {ip:<15}")
+                    ip = input(Fore.CYAN + "📝 Enter the proxy IP address: " + Style.RESET_ALL).strip()
+                    port = input(Fore.CYAN + "📝 Enter the proxy port: " + Style.RESET_ALL).strip()
+                    if re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip) and port.isdigit():
+                        subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy {ip}:{port}', shell=True)
+                        print(Fore.GREEN + f"✅ Proxy set to {ip}:{port} on the emulator." + Style.RESET_ALL)
+                    else:
+                        print(Fore.RED + "❌ Invalid IP address or port number." + Style.RESET_ALL)
+                elif emulator_choice == '6':
+                    subprocess.run(f'{adb_command} -s {device_serial} shell settings put global http_proxy :0', shell=True)
+                    print(Fore.GREEN + "✅ Proxy removed from the emulator." + Style.RESET_ALL)
+                elif emulator_choice == '7':
+                    break
+                else:
+                    print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)
         elif main_choice == '4':
             while True:
                 show_frida_menu()

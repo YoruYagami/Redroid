@@ -684,10 +684,14 @@ def list_installed_applications():
 #  New Target Selection Functions (using ADB)
 # ============================================================
 
-def list_relevant_apps():
+def list_relevant_apps(include_system_apps=False):
     """
     Uses ADB to list running processes and returns only those that look like app package names.
     It runs "adb shell ps" on the selected device and filters for process names that contain a dot.
+    By default, it filters out common system apps to reduce noise.
+    
+    Args:
+        include_system_apps (bool): If True, include system apps in the results.
     """
     global adb_command, device_serial
     if adb_command is None or not device_serial:
@@ -706,6 +710,20 @@ def list_relevant_apps():
         print(Fore.YELLOW + "⚠️ No processes found." + Style.RESET_ALL)
         return []
     
+    # Common system app prefixes to filter out
+    system_app_prefixes = [
+        "com.android.",
+        "com.google.",
+        "android.",
+        "system.",
+        "com.sec.",  # Samsung
+        "com.xiaomi.",  # Xiaomi
+        "com.huawei.",  # Huawei
+        "com.oppo.",    # OPPO
+        "com.vivo.",    # Vivo
+        "com.oneplus."  # OnePlus
+    ]
+    
     apps = []
     # Skip header and assume the last column is the process name.
     for line in lines[1:]:
@@ -713,7 +731,10 @@ def list_relevant_apps():
         if parts:
             process_name = parts[-1]
             if '.' in process_name and process_name not in apps:
-                apps.append(process_name)
+                # Filter out system apps if include_system_apps is False
+                if include_system_apps or not any(process_name.startswith(prefix) for prefix in system_app_prefixes):
+                    apps.append(process_name)
+    
     return apps
 
 def set_target_app():
@@ -722,21 +743,42 @@ def set_target_app():
     The selected package name is saved in the global variable `target_app`.
     """
     global target_app
-    apps = list_relevant_apps()
+    
+    # First try without system apps
+    apps = list_relevant_apps(include_system_apps=False)
+    
     if not apps:
         print(Fore.YELLOW + "⚠️ No relevant running applications found." + Style.RESET_ALL)
-        return
+        include_system = input(Fore.CYAN + "Would you like to include system apps? (y/n): " + Style.RESET_ALL).strip().lower()
+        if include_system in ['y', 'yes']:
+            apps = list_relevant_apps(include_system_apps=True)
+            if not apps:
+                print(Fore.RED + "❌ No applications found even with system apps included." + Style.RESET_ALL)
+                return
+        else:
+            return
 
     print("\n" + Fore.CYAN + "Select a target application from the list:" + Style.RESET_ALL)
     for idx, app in enumerate(apps, 1):
         print(f"{idx}. {app}")
+    
+    print(f"{len(apps) + 1}. Enter package name manually")
 
     choice = input(Fore.CYAN + "Enter the number of your target app: " + Style.RESET_ALL).strip()
-    if not choice.isdigit() or int(choice) < 1 or int(choice) > len(apps):
+    if not choice.isdigit() or int(choice) < 1 or int(choice) > len(apps) + 1:
         print(Fore.RED + "❌ Invalid choice. Target not set." + Style.RESET_ALL)
         return
-
-    target_app = apps[int(choice) - 1]
+    
+    if int(choice) == len(apps) + 1:
+        # Manual entry option
+        manual_package = input(Fore.CYAN + "Enter the package name manually: " + Style.RESET_ALL).strip()
+        if not manual_package or '.' not in manual_package:
+            print(Fore.RED + "❌ Invalid package name. Target not set." + Style.RESET_ALL)
+            return
+        target_app = manual_package
+    else:
+        target_app = apps[int(choice) - 1]
+    
     print(Fore.GREEN + f"✅ Target set to: {target_app}" + Style.RESET_ALL)
 
 # ============================================================
@@ -1432,14 +1474,25 @@ def tapjacking_apk_builder():
     Fully automated APK generation for TapJacking PoC.
     Prompts for target app details and builds an unsigned APK.
     """
-    # Prompt the user for package name and activity name
-    print("==== TapJacking APK Builder ====")
-    package_name = input("Enter the target application package name: ")
+    global target_app
+    
+    # Check if target app is set, if not prompt to set it
+    if not target_app:
+        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
+            return
+    
+    package_name = target_app
+    print(Fore.GREEN + f"Using target app: {package_name}" + Style.RESET_ALL)
+    
+    # Prompt for activity name
     activity_name = input("Enter the exported activity name to test: ")
     
     # Validate inputs
-    if not package_name or not activity_name:
-        print("Error: Package name and activity name cannot be empty.")
+    if not activity_name:
+        print("Error: Activity name cannot be empty.")
         sys.exit(1)
     
     print(f"\nBuilding tapjacking APK targeting:")
@@ -1815,14 +1868,25 @@ def task_hijacking_apk_builder():
     Fully automated APK generation for Task Hijacking PoC.
     Prompts for target app details and builds an unsigned APK.
     """
-    # Prompt the user for package name and activity name
-    print("==== Task Hijacking APK Builder ====")
-    target_package = input("Enter the target application package name: ")
+    global target_app
+    
+    # Check if target app is set, if not prompt to set it
+    if not target_app:
+        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
+            return
+    
+    target_package = target_app
+    print(Fore.GREEN + f"Using target app: {target_package}" + Style.RESET_ALL)
+    
+    # Prompt for activity name
     target_activity = input("Enter the target activity name to hijack: ")
     
     # Validate inputs
-    if not target_package or not target_activity:
-        print("Error: Package name and activity name cannot be empty.")
+    if not target_activity:
+        print("Error: Activity name cannot be empty.")
         sys.exit(1)
     
     print(f"\nBuilding task hijacking APK targeting:")

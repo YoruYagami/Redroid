@@ -2282,12 +2282,23 @@ public class HijackingActivity extends Activity {{
     return output_apk
 
 def drozer_vulnscan():
+    global target_app
     # Inizializzazione variabili per report HTML e separatore
     html_begin = "<html><head><title>APP Analysis Report</title></head><body><h1 style=\"text-align: center;\"><strong>Drozer Analysis Report</strong></h1>"
     separator = "_" * 100 + "\n"
     
-    # Richiesta di input all'utente
-    p_name = input("Enter the Package Name: ")
+    # Check if target app is set, if not prompt to set it
+    if not target_app:
+        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
+        set_target_app()
+        if not target_app:
+            print(Fore.RED + "❌ No target app selected. Aborting scan." + Style.RESET_ALL)
+            return
+    
+    p_name = target_app
+    print(Fore.GREEN + f"Using target app: {p_name}" + Style.RESET_ALL)
+    
+    # Richiesta di input all'utente per il nome del file
     file_name = input("Enter the file name to store the results: ")
     f_json = file_name + ".json"
     f_html = file_name + ".html"

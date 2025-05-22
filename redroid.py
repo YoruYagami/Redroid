@@ -403,19 +403,29 @@ def run_mobsf():
     else:
         use_proxy = False
 
-    print(f"\n{Fore.YELLOW}Removing any existing 'mobsf' container...{Style.RESET_ALL}")
-    subprocess.run("docker rm -f mobsf", shell=True, capture_output=True)
+    print(f"\n{Fore.YELLOW}Checking for existing 'mobsf' container...{Style.RESET_ALL}")
+    # Check if the 'mobsf' container exists
+    result = subprocess.run('docker ps -a --filter name=^/mobsf$ --format "{{.Status}}"', shell=True, capture_output=True, text=True)
+    container_status = result.stdout.strip()
 
-    docker_cmd = 'docker run -it --name mobsf -p 8000:8000 -p 1337:1337 '
-    if device_serial:
-        docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
-    if use_proxy:
-        docker_cmd += f'-e MOBSF_PROXY_IP="{user_ip}" -e MOBSF_PROXY_PORT="{user_port}" '
-    docker_cmd += 'opensecurity/mobile-security-framework-mobsf:latest'
+    if container_status:
+        if container_status.lower().startswith("up"):
+            print(Fore.GREEN + "✅ 'mobsf' container is already running." + Style.RESET_ALL)
+        else:
+            print(Fore.YELLOW + "⚠️ 'mobsf' container exists but is not running. Starting it..." + Style.RESET_ALL)
+            subprocess.run("docker start mobsf", shell=True)
+            print(Fore.GREEN + "✅ 'mobsf' container started." + Style.RESET_ALL)
+    else:
+        docker_cmd = 'docker run -it --name mobsf -p 8000:8000 -p 1337:1337 '
+        if device_serial:
+            docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
+        if use_proxy:
+            docker_cmd += f'-e MOBSF_PROXY_IP="{user_ip}" -e MOBSF_PROXY_PORT="{user_port}" '
+        docker_cmd += 'opensecurity/mobile-security-framework-mobsf:latest'
 
-    print(f"\n{Fore.CYAN}Launching MobSF container with the following command:{Style.RESET_ALL}")
-    print(docker_cmd)
-    open_new_terminal(docker_cmd)
+        print(f"\n{Fore.CYAN}Launching MobSF container with the following command:{Style.RESET_ALL}")
+        print(docker_cmd)
+        open_new_terminal(docker_cmd)
 
     if device_serial and use_proxy:
         settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"

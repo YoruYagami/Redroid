@@ -10,6 +10,8 @@ import sys
 import shlex
 import ctypes
 import time
+import signal
+import threading
 from platform import system
 import warnings
 import requests
@@ -33,6 +35,7 @@ emulator_installation_path = None
 adb_command = None
 device_serial = None
 target_app = None
+switch_device_requested = False
 
 def detect_emulator():
     """Detect whether Nox, Genymotion, or Android Studio emulator is running.
@@ -129,6 +132,119 @@ def get_connected_devices(adb_command):
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"❌ Error executing adb: {e}" + Style.RESET_ALL)
         return []
+
+def switch_device():
+    """Switch to a different connected device."""
+    global device_serial, adb_command
+    
+    if adb_command is None:
+        print(Fore.RED + "❌ ADB command not available." + Style.RESET_ALL)
+        return False
+    
+    devices = get_connected_devices(adb_command)
+    if len(devices) <= 1:
+        print(Fore.YELLOW + "⚠️ Only one or no devices connected. Cannot switch." + Style.RESET_ALL)
+        return False
+    
+    print(Fore.CYAN + "\n🔄 Available devices:" + Style.RESET_ALL)
+    for idx, dev in enumerate(devices, 1):
+        current_indicator = " (current)" if dev == device_serial else ""
+        print(f"{idx}. {dev}{current_indicator}")
+    
+    try:
+        choice = input(Fore.CYAN + "Select device number to switch to: " + Style.RESET_ALL).strip()
+        if choice.isdigit() and 1 <= int(choice) <= len(devices):
+            new_device = devices[int(choice) - 1]
+            if new_device != device_serial:
+                device_serial = new_device
+                print(Fore.GREEN + f"✅ Switched to device: {device_serial}" + Style.RESET_ALL)
+                return True
+            else:
+                print(Fore.YELLOW + "⚠️ Already connected to this device." + Style.RESET_ALL)
+                return False
+        else:
+            print(Fore.RED + "❌ Invalid choice." + Style.RESET_ALL)
+            return False
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n⚠️ Device switch cancelled." + Style.RESET_ALL)
+        return False
+
+def setup_ctrl_d_handler():
+    """Setup signal handler for Ctrl+D detection."""
+    global switch_device_requested
+    
+    def signal_handler(signum, frame):
+        global switch_device_requested
+        switch_device_requested = True
+        print(Fore.CYAN + "\n🔄 Ctrl+D detected! Device switch requested..." + Style.RESET_ALL)
+    
+    # On Windows, we'll use a different approach with a background thread
+    if platform.system() == "Windows":
+        setup_windows_ctrl_d_handler()
+        return
+    
+    try:
+        # For Unix-like systems, use SIGTERM
+        signal.signal(signal.SIGTERM, signal_handler)
+        # Also try to catch SIGINT (Ctrl+C) as fallback
+        signal.signal(signal.SIGINT, signal_handler)
+    except Exception:
+        pass
+
+def setup_windows_ctrl_d_handler():
+    """Setup Windows-specific Ctrl+D handler using a background thread."""
+    global switch_device_requested
+    
+    def windows_input_monitor():
+        """Monitor for special input commands on Windows."""
+        import msvcrt
+        global switch_device_requested
+        
+        while True:
+            try:
+                if msvcrt.kbhit():
+                    key = msvcrt.getch()
+                    # Check for Ctrl+D (ASCII 4)
+                    if ord(key) == 4:
+                        switch_device_requested = True
+                        print(Fore.CYAN + "\n🔄 Ctrl+D detected! Device switch requested..." + Style.RESET_ALL)
+                time.sleep(0.1)
+            except Exception:
+                break
+    
+    # Start the monitoring thread
+    monitor_thread = threading.Thread(target=windows_input_monitor, daemon=True)
+    monitor_thread.start()
+
+def safe_shutdown():
+    """Perform a safe shutdown of the script."""
+    print(Fore.CYAN + "\n🔄 Shutting down..." + Style.RESET_ALL)
+    print(Fore.GREEN + "Goodbye!" + Style.RESET_ALL)
+    sys.exit(0)
+
+def check_and_handle_device_switch():
+    """Check if device switch was requested and handle it."""
+    global switch_device_requested
+    
+    if switch_device_requested:
+        switch_device_requested = False
+        switch_device()
+
+def get_input_with_device_switch_check(prompt):
+    """Get input while checking for device switch requests."""
+    while True:
+        try:
+            print(Fore.YELLOW + "💡 Tip: Type 'switch' to change device" + Style.RESET_ALL)
+            user_input = input(prompt)
+            # Check if user typed switch command
+            if user_input.lower() == 'switch':
+                if switch_device():
+                    print(Fore.GREEN + "Device switched successfully! Please enter your choice again." + Style.RESET_ALL)
+                continue
+            return user_input
+        except KeyboardInterrupt:
+            print(Fore.YELLOW + "\n🔄 Ctrl+C detected! Initiating safe shutdown..." + Style.RESET_ALL)
+            safe_shutdown()
 
 def run_adb_command(command):
     """Run an adb command for the selected device."""
@@ -335,47 +451,36 @@ def run_mobsf():
     print(f"{Fore.MAGENTA}=== MobSF Setup ==={Style.RESET_ALL}")
     print("=" * 50)
 
-    print(f"\n{Fore.CYAN}Do you want to connect MobSF to an emulator?{Style.RESET_ALL}")
-    devices = get_connected_devices(adb_command)
-    if devices:
-        default_emulator = "emulator-5554" if "emulator-5554" in devices else devices[0]
-        print(f"1. Use detected emulator ({default_emulator})")
+    # Show currently connected device
+    if device_serial:
+        print(f"{Fore.GREEN}✅ Currently connected device: {device_serial}{Style.RESET_ALL}")
     else:
-        print("No emulator running detected.")
+        print(f"{Fore.YELLOW}⚠️ No device currently selected{Style.RESET_ALL}")
 
+    print(f"\n{Fore.CYAN}Do you want to connect MobSF to an emulator?{Style.RESET_ALL}")
+    print(f"1. Use currently connected device ({device_serial if device_serial else 'None'})")
     print("2. Specify a custom device ID (e.g., emulator-5554 or adb_ip:adb_port)")
     print("3. Do not use any emulator")
     emu_choice = input("Enter your choice (1/2/3): ").strip()
 
+    mobsf_device = None
     if emu_choice == "1":
-        if devices:
-            if len(devices) == 1:
-                device_serial = devices[0]
-            else:
-                device_serial = default_emulator
-                print(f"\n{Fore.GREEN}Detected devices:{Style.RESET_ALL}")
-                for idx, dev in enumerate(devices, 1):
-                    print(f"  {idx}. {dev}")
-                use_default = input(f"Default '{default_emulator}' will be used. Do you want to use it? (y/n): ").strip().lower()
-                if use_default not in ["y", "yes"]:
-                    try:
-                        choice = int(input("Enter the number of the device you want to use: ").strip())
-                        device_serial = devices[choice - 1]
-                    except Exception:
-                        print(Fore.RED + "❌ Invalid choice. Aborting." + Style.RESET_ALL)
-                        return
+        if device_serial:
+            mobsf_device = device_serial
+            print(f"{Fore.GREEN}✅ Using currently connected device: {device_serial}{Style.RESET_ALL}")
         else:
-            print(Fore.RED + "❌ No detected emulator. Please choose option 2 or 3." + Style.RESET_ALL)
+            print(Fore.RED + "❌ No device currently connected. Please choose option 2 or 3." + Style.RESET_ALL)
             return
     elif emu_choice == "2":
         custom_id = input("Enter the custom device ID (e.g., emulator-5554): ").strip()
         if custom_id:
-            device_serial = custom_id
+            mobsf_device = custom_id
+            print(f"{Fore.GREEN}✅ Using custom device: {custom_id}{Style.RESET_ALL}")
         else:
             print(Fore.RED + "❌ Invalid device ID. Aborting." + Style.RESET_ALL)
             return
     elif emu_choice == "3":
-        device_serial = None
+        mobsf_device = None
         print(Fore.GREEN + "Proceeding without connecting to an emulator." + Style.RESET_ALL)
     else:
         print(Fore.RED + "❌ Invalid choice. Aborting." + Style.RESET_ALL)
@@ -417,8 +522,8 @@ def run_mobsf():
             print(Fore.GREEN + "✅ 'mobsf' container started." + Style.RESET_ALL)
     else:
         docker_cmd = 'docker run -it --name mobsf -p 8000:8000 -p 1337:1337 '
-        if device_serial:
-            docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{device_serial}" '
+        if mobsf_device:
+            docker_cmd += f'-e MOBSF_ANALYZER_IDENTIFIER="{mobsf_device}" '
         if use_proxy:
             docker_cmd += f'-e MOBSF_PROXY_IP="{user_ip}" -e MOBSF_PROXY_PORT="{user_port}" '
         docker_cmd += 'opensecurity/mobile-security-framework-mobsf:latest'
@@ -427,14 +532,14 @@ def run_mobsf():
         print(docker_cmd)
         open_new_terminal(docker_cmd)
 
-    if device_serial and use_proxy:
+    if mobsf_device and use_proxy:
         settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"
-        adb_cmd = f'adb -s {device_serial} shell settings put global {settings_key} {user_ip}:{user_port}'
-        try:
-            subprocess.run(adb_cmd, shell=True, check=True)
+        # Use run_adb_command to ensure correct device targeting
+        result = run_adb_command(f'shell settings put global {settings_key} {user_ip}:{user_port}')
+        if result and result.returncode == 0:
             print(Fore.GREEN + f"✅ Global {settings_key} set to {user_ip}:{user_port} on emulator {device_serial}." + Style.RESET_ALL)
-        except subprocess.CalledProcessError as e:
-            print(Fore.RED + f"❌ Failed to set global {settings_key} on emulator. Error: {e}" + Style.RESET_ALL)
+        else:
+            print(Fore.RED + f"❌ Failed to set global {settings_key} on emulator." + Style.RESET_ALL)
 
     print(Fore.GREEN + "\n✅ Setup complete! The MobSF container is starting in a separate window." + Style.RESET_ALL)
 
@@ -561,6 +666,128 @@ def run_apkleaks():
     except Exception as e:
         print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
 
+def run_trufflehog_against_apk():
+    # Check if Docker is available
+    if not shutil.which("docker"):
+        print(Fore.RED + "❌ Docker is not installed or not in the PATH." + Style.RESET_ALL)
+        return
+
+    while True:
+        apk_path_input = input("📝 Enter the path to the APK file: ").strip()
+        apk_path = apk_path_input.strip("'").strip('"')
+        if os.path.exists(apk_path):
+            break
+        else:
+            print(f"❌ Error: The file {apk_path_input} does not exist.")
+
+    script_dir = os.getcwd()
+    output_dir = os.path.join(script_dir, os.path.splitext(os.path.basename(apk_path))[0])
+    
+    if os.path.exists(output_dir):
+        print(f"\n⚠️ The directory \"{output_dir}\" already exists.")
+        print("What would you like to do?")
+        print("1. Scan directly using the existing Apktool output")
+        print("2. Overwrite the output with a fresh decompilation")
+        action_choice = input("\nEnter your choice (1 or 2): ").strip()
+        if action_choice not in ['1', '2']:
+            print("\n❌ Invalid choice. Operation cancelled.\n")
+            return
+        if action_choice == '2':
+            shutil.rmtree(output_dir)
+
+    # Decompile APK if directory doesn't exist or user chose to overwrite
+    if not os.path.exists(output_dir):
+        apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
+        try:
+            print(Fore.CYAN + f"🔧 Decompiling APK with apktool..." + Style.RESET_ALL)
+            subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
+            print(Fore.GREEN + f"✅ APK decompiled successfully to {output_dir}" + Style.RESET_ALL)
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ Error: Failed to decompile APK. {e}\n")
+            return
+        except FileNotFoundError as e:
+            print(f"\n❌ Error: {e}. Ensure apktool is installed and accessible.")
+            return
+
+    # Run TruffleHog using Docker
+    print(Fore.CYAN + f"🔍 Running TruffleHog on decompiled APK..." + Style.RESET_ALL)
+    
+    # Convert Windows paths to Unix-style for Docker
+    if platform.system() == "Windows":
+        # Convert Windows path to Unix-style for Docker
+        current_dir_unix = os.getcwd().replace("\\", "/").replace(":", "")
+        if current_dir_unix.startswith("/"):
+            docker_pwd = current_dir_unix
+        else:
+            docker_pwd = "/" + current_dir_unix
+        
+        # Use PowerShell syntax for Windows
+        docker_cmd = f'docker run --rm -v "{os.getcwd()}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
+    else:
+        # Unix/Linux/Mac
+        docker_cmd = f'docker run --rm -v "${{PWD}}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
+    
+    try:
+        print(Fore.CYAN + f"🐷 Executing: {docker_cmd}" + Style.RESET_ALL)
+        # Use encoding='utf-8' and errors='replace' to handle Unicode issues
+        result = subprocess.run(docker_cmd, shell=True, capture_output=True, text=True, 
+                              encoding='utf-8', errors='replace', check=True)
+        
+        # Display results
+        if result.stdout.strip():
+            print(Fore.GREEN + "✅ TruffleHog scan completed!" + Style.RESET_ALL)
+            print(Fore.YELLOW + "\n📋 TruffleHog Results:" + Style.RESET_ALL)
+            print(result.stdout)
+        else:
+            print(Fore.GREEN + "✅ TruffleHog scan completed - No secrets found!" + Style.RESET_ALL)
+        
+        # Save output to file
+        save_output = input(Fore.CYAN + "Do you want to save the output to a file? (y/n): " + Style.RESET_ALL).strip().lower()
+        if save_output in ['y', 'yes']:
+            output_filename = f"{os.path.splitext(os.path.basename(apk_path))[0]}_trufflehog_output.txt"
+            output_file = os.path.join(script_dir, output_filename)
+            with open(output_file, "w", encoding='utf-8') as file:
+                file.write(f"TruffleHog Scan Results for: {apk_path}\n")
+                file.write(f"Decompiled directory: {output_dir}\n")
+                file.write(f"Command executed: {docker_cmd}\n")
+                file.write("=" * 50 + "\n")
+                file.write(result.stdout if result.stdout else "No output from TruffleHog\n")
+                if result.stderr:
+                    file.write("\n" + "=" * 50 + "\n")
+                    file.write("STDERR:\n")
+                    file.write(result.stderr)
+            print(Fore.GREEN + f"✅ Output saved to {output_file}" + Style.RESET_ALL)
+            
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Error running TruffleHog: {e}" + Style.RESET_ALL)
+        # Handle encoding issues in error output
+        try:
+            if hasattr(e, 'stderr') and e.stderr:
+                print(Fore.RED + f"Error details: {e.stderr}" + Style.RESET_ALL)
+        except UnicodeDecodeError:
+            print(Fore.RED + "Error details: [Unable to decode error message due to encoding issues]" + Style.RESET_ALL)
+    except UnicodeDecodeError as e:
+        print(Fore.YELLOW + f"⚠️ Unicode encoding issue detected: {e}" + Style.RESET_ALL)
+        print(Fore.YELLOW + "TruffleHog may have completed successfully despite the encoding warning." + Style.RESET_ALL)
+        # Try to run without text mode to avoid encoding issues
+        try:
+            result_bytes = subprocess.run(docker_cmd, shell=True, capture_output=True, check=True)
+            stdout_decoded = result_bytes.stdout.decode('utf-8', errors='replace')
+            stderr_decoded = result_bytes.stderr.decode('utf-8', errors='replace') if result_bytes.stderr else ""
+            
+            if stdout_decoded.strip():
+                print(Fore.GREEN + "✅ TruffleHog scan completed!" + Style.RESET_ALL)
+                print(Fore.YELLOW + "\n📋 TruffleHog Results:" + Style.RESET_ALL)
+                print(stdout_decoded)
+            else:
+                print(Fore.GREEN + "✅ TruffleHog scan completed - No secrets found!" + Style.RESET_ALL)
+        except Exception as fallback_e:
+            print(Fore.RED + f"❌ Fallback execution also failed: {fallback_e}" + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
+    
+    print(Fore.GREEN + "🔍 TruffleHog analysis complete." + Style.RESET_ALL)
+
 def is_frida_server_running():
     global adb_command, device_serial
     if adb_command is None or not device_serial:
@@ -632,19 +859,31 @@ def install_frida_server():
 
     try:
         print(Fore.CYAN + "🔧 Setting device to root mode and remounting system partition..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} root', shell=True, check=True)
+        root_result = run_adb_command('root')
+        if root_result is None:
+            print(Fore.RED + "❌ Unable to obtain root privileges via adb." + Style.RESET_ALL)
+            return
         time.sleep(2)
-        subprocess.run(f'{adb_command} -s {device_serial} remount', shell=True, check=True)
+        remount_result = run_adb_command('remount')
+        if remount_result is None:
+            print(Fore.RED + "❌ Unable to remount the partition as writable." + Style.RESET_ALL)
+            return
         print(Fore.GREEN + "✅ Device is in root mode and system partition is remounted." + Style.RESET_ALL)
 
         print(Fore.CYAN + "📦 Pushing Frida-Server to /data/local/tmp/..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} push frida-server /data/local/tmp/', shell=True, check=True)
+        push_result = run_adb_command('push frida-server /data/local/tmp/')
+        if push_result is None:
+            print(Fore.RED + "❌ Failed to push Frida-Server to device." + Style.RESET_ALL)
+            return
         print(Fore.GREEN + "✅ Frida-Server pushed successfully." + Style.RESET_ALL)
 
         print(Fore.CYAN + "🔧 Setting executable permissions on Frida-Server..." + Style.RESET_ALL)
-        subprocess.run(f'{adb_command} -s {device_serial} shell "chmod 755 /data/local/tmp/frida-server"', shell=True, check=True)
+        chmod_result = run_adb_command('shell "chmod 755 /data/local/tmp/frida-server"')
+        if chmod_result is None:
+            print(Fore.RED + "❌ Failed to set permissions on Frida-Server." + Style.RESET_ALL)
+            return
         print(Fore.GREEN + "✅ Permissions set: Frida-Server is ready." + Style.RESET_ALL)
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(Fore.RED + f"❌ Error during Frida-Server installation: {e}" + Style.RESET_ALL)
         return
 
@@ -2566,8 +2805,9 @@ def show_run_tools_menu():
     print("1. 🛡️  Run MobSF (docker)")
     print("2. 🔍  Run nuclei against APK")
     print("3. 🕵️  Run apkleaks against APK")
-    print("4. 🚀  Run Android Studio Emulator")
-    print("5. ↩️  Back")
+    print("4. 🐷  Run TruffleHog against APK")
+    print("5. 🚀  Run Android Studio Emulator")
+    print("6. ↩️  Back")
 
 def show_emulator_options_menu():
     print("\n" + "=" * 50)
@@ -2619,6 +2859,7 @@ def show_main_menu():
 def main():
     global emulator_type, emulator_installation_path, adb_command, device_serial, target_app
 
+
     emulator_type, emulator_installation_path = detect_emulator()
     if emulator_type:
         print(Fore.GREEN + f"✅ Emulator detected: {emulator_type}" + Style.RESET_ALL)
@@ -2649,9 +2890,13 @@ def main():
             print(Fore.RED + "❌ Invalid choice. No device selected." + Style.RESET_ALL)
             device_serial = None
 
+    # Show device switch instructions
+    if len(devices) > 1:
+        print(Fore.CYAN + f"💡 You can switch between devices anytime by pressing Ctrl+D or typing 'switch'" + Style.RESET_ALL)
+
     while True:
         show_main_menu()
-        main_choice = input(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
+        main_choice = get_input_with_device_switch_check(Fore.CYAN + "📌 Enter your choice: " + Style.RESET_ALL).strip()
         if main_choice == '1':
             set_target_app()
         elif main_choice == '2':
@@ -2665,8 +2910,10 @@ def main():
                 elif run_tools_choice == '3':
                     run_apkleaks()
                 elif run_tools_choice == '4':
-                    run_android_studio_emulator()
+                    run_trufflehog_against_apk()
                 elif run_tools_choice == '5':
+                    run_android_studio_emulator()
+                elif run_tools_choice == '6':
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)

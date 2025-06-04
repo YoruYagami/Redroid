@@ -234,7 +234,6 @@ def get_input_with_device_switch_check(prompt):
     """Get input while checking for device switch requests."""
     while True:
         try:
-            print(Fore.YELLOW + "💡 Tip: Type 'switch' to change device" + Style.RESET_ALL)
             user_input = input(prompt)
             # Check if user typed switch command
             if user_input.lower() == 'switch':
@@ -2890,9 +2889,6 @@ def main():
             print(Fore.RED + "❌ Invalid choice. No device selected." + Style.RESET_ALL)
             device_serial = None
 
-    # Show device switch instructions
-    if len(devices) > 1:
-        print(Fore.CYAN + f"💡 You can switch between devices anytime by pressing Ctrl+D or typing 'switch'" + Style.RESET_ALL)
 
     while True:
         show_main_menu()

@@ -3,7 +3,6 @@ frida-tools
 psutil
 requests
 beautifulsoup4
-bs4
 colorama
 apkleaks
 objection

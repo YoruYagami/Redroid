@@ -7,6 +7,50 @@ Redroid is a versatile mobile security toolkit built to assist pentesters during
 
 ![image](static/redroid_menu.png)
 
+## Installation
+
+### Using pipx (Recommended)
+
+The easiest way to install Redroid is using pipx, which will install it in an isolated environment:
+
+```bash
+pipx install redroid
+```
+
+After installation, you can run the tool from anywhere:
+
+```bash
+redroid
+```
+
+### Manual Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/samsepi01/Redroid.git
+cd Redroid
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Run the tool:
+```bash
+python redroid.py
+```
+
+### Development Installation
+
+For development purposes, you can install in editable mode:
+
+```bash
+git clone https://github.com/samsepi01/Redroid.git
+cd Redroid
+pip install -e .
+```
+
 #### To do
 - [X] Multi devices handling
 - [X] Fix logic of existing functions (ex. mobsf)

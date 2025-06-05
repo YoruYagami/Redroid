@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "redroid"
+version = "1.0.0"
+description = "Android Security Testing Tool with Emulator Support"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {file = "LICENSE"}
+authors = [
+    {name = "samsepi01"},
+]
+keywords = ["android", "security", "testing", "frida", "emulator", "adb", "mobile", "pentesting"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "frida",
+    "frida-tools",
+    "psutil",
+    "requests",
+    "beautifulsoup4",
+    "colorama",
+    "apkleaks",
+    "objection",
+    "drozer",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8",
+]
+
+[project.urls]
+Homepage = "https://github.com/samsepi01/Redroid"
+Repository = "https://github.com/samsepi01/Redroid"
+Issues = "https://github.com/samsepi01/Redroid/issues"
+
+[project.scripts]
+redroid = "redroid:main"
+
+[tool.setuptools]
+py-modules = ["redroid"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["frida-scripts/*.js", "static/*"]

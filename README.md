@@ -13,6 +13,6 @@ Redroid is a versatile mobile security toolkit built to assist pentesters during
 - [X] Add trufflehog security check on source code
 - [ ] Add firebase testing check
 - [ ] Add manual checks in the drozer menu 
-- [ ] Add logcat stream check
+- [X] Add logcat stream check
 - [X] Automatic apk Sign/Patching
 - [ ] Make everything cross-platform (Windows <-> Kali Linux)

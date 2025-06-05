@@ -1717,6 +1717,115 @@ def scan_gmaps(apikey):
     
     return True
 
+def sign_apk(apk_path):
+    """
+    Sign an APK using either objection or uber-apk-signer.
+    Returns the path to the signed APK or None if signing failed.
+    """
+    print(f"\n{Fore.CYAN}Do you want to sign the APK?{Style.RESET_ALL}")
+    print("1. Yes, using objection")
+    print("2. Yes, using uber-apk-signer")
+    print("3. No, keep unsigned")
+    
+    choice = input(Fore.CYAN + "Enter your choice (1/2/3): " + Style.RESET_ALL).strip()
+    
+    if choice == "1":
+        # Use objection
+        try:
+            print(Fore.CYAN + "🔧 Signing APK with objection..." + Style.RESET_ALL)
+            result = subprocess.run(['objection', 'patchapk', '-s', apk_path], 
+                                  capture_output=True, text=True, check=True)
+            print(Fore.GREEN + "✅ APK signed successfully with objection!" + Style.RESET_ALL)
+            if result.stdout:
+                print(Fore.YELLOW + f"Output: {result.stdout}" + Style.RESET_ALL)
+            return apk_path  # objection modifies the original file
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Error signing with objection: {e}" + Style.RESET_ALL)
+            if e.stderr:
+                print(Fore.RED + f"Error details: {e.stderr}" + Style.RESET_ALL)
+            return None
+        except FileNotFoundError:
+            print(Fore.RED + "❌ objection not found. Please install it using 'pip install objection'." + Style.RESET_ALL)
+            return None
+    
+    elif choice == "2":
+        # Use uber-apk-signer
+        try:
+            print(Fore.CYAN + "🔍 Checking for latest uber-apk-signer release..." + Style.RESET_ALL)
+            
+            # Get latest release info from GitHub API
+            response = requests.get("https://api.github.com/repos/patrickfav/uber-apk-signer/releases/latest", timeout=15)
+            response.raise_for_status()
+            release_data = response.json()
+            
+            # Find the JAR asset
+            jar_url = None
+            jar_filename = None
+            for asset in release_data.get("assets", []):
+                if asset["name"].endswith(".jar") and "uber-apk-signer" in asset["name"]:
+                    jar_url = asset["browser_download_url"]
+                    jar_filename = asset["name"]
+                    break
+            
+            if not jar_url:
+                print(Fore.RED + "❌ Could not find uber-apk-signer JAR in latest release." + Style.RESET_ALL)
+                return None
+            
+            # Check if JAR already exists
+            if not os.path.exists(jar_filename):
+                print(Fore.CYAN + f"📥 Downloading {jar_filename}..." + Style.RESET_ALL)
+                with requests.get(jar_url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(jar_filename, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                print(Fore.GREEN + f"✅ Downloaded {jar_filename}" + Style.RESET_ALL)
+            else:
+                print(Fore.GREEN + f"✅ Using existing {jar_filename}" + Style.RESET_ALL)
+            
+            # Sign the APK
+            print(Fore.CYAN + "🔧 Signing APK with uber-apk-signer..." + Style.RESET_ALL)
+            cmd = ['java', '-jar', jar_filename, '-apk', apk_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            
+            print(Fore.GREEN + "✅ APK signed successfully with uber-apk-signer!" + Style.RESET_ALL)
+            if result.stdout:
+                print(Fore.YELLOW + f"Output: {result.stdout}" + Style.RESET_ALL)
+            
+            # uber-apk-signer creates a new signed file
+            base_name = os.path.splitext(apk_path)[0]
+            signed_apk = f"{base_name}-aligned-debugSigned.apk"
+            if os.path.exists(signed_apk):
+                return signed_apk
+            else:
+                # Try alternative naming pattern
+                signed_apk = f"{base_name}-signed.apk"
+                if os.path.exists(signed_apk):
+                    return signed_apk
+                else:
+                    print(Fore.YELLOW + "⚠️ Signed APK location unclear, check current directory." + Style.RESET_ALL)
+                    return apk_path
+                    
+        except requests.RequestException as e:
+            print(Fore.RED + f"❌ Error downloading uber-apk-signer: {e}" + Style.RESET_ALL)
+            return None
+        except subprocess.CalledProcessError as e:
+            print(Fore.RED + f"❌ Error signing with uber-apk-signer: {e}" + Style.RESET_ALL)
+            if e.stderr:
+                print(Fore.RED + f"Error details: {e.stderr}" + Style.RESET_ALL)
+            return None
+        except Exception as e:
+            print(Fore.RED + f"❌ Unexpected error with uber-apk-signer: {e}" + Style.RESET_ALL)
+            return None
+    
+    elif choice == "3":
+        print(Fore.YELLOW + "⚠️ APK will remain unsigned." + Style.RESET_ALL)
+        return apk_path
+    
+    else:
+        print(Fore.RED + "❌ Invalid choice. APK will remain unsigned." + Style.RESET_ALL)
+        return apk_path
+
 def tapjacking_apk_builder():
     """
     Fully automated APK generation for TapJacking PoC.
@@ -2109,7 +2218,13 @@ public class OverlayService extends Service {{
     print("APK generation complete (unsigned).")
     print(f"\nBuild successful! APK generated at: {output_apk}")
     
-    return output_apk
+    # Ask user if they want to sign the APK
+    signed_apk = sign_apk(output_apk)
+    if signed_apk and signed_apk != output_apk:
+        print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
+        return signed_apk
+    else:
+        return output_apk
 
 def task_hijacking_apk_builder():
     """
@@ -2591,7 +2706,13 @@ public class HijackingActivity extends Activity {{
     print("APK generation complete (unsigned).")
     print(f"\nBuild successful! APK generated at: {output_apk}")
     
-    return output_apk
+    # Ask user if they want to sign the APK
+    signed_apk = sign_apk(output_apk)
+    if signed_apk and signed_apk != output_apk:
+        print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
+        return signed_apk
+    else:
+        return output_apk
 
 def drozer_vulnscan():
     global target_app

@@ -1,29 +1,39 @@
-## Redroid - Android Application Penetration Testing Automation Toolkit
+# Redroid – Android Application Pentesting Automation Toolkit
 
-> :warning: Work in Progress
-This tool is currently in active development. Features and behavior may change, and some modules may not work as expected on all environments. Feel free to PR/Issue.
+> ⚠️ **Work in Progress**  
+> Redroid is under active development. Some features may be unstable or not fully compatible across environments. Contributions and issue reports are welcome.
 
-Redroid is a versatile mobile security toolkit built to assist pentesters during android application security assessments. It streamlines the setup of  burp certificate, manages proxy configurations and integrates with tools like Frida, Drozer, MobSF, Nuclei, and ApkLeaks. The toolkit automates common tasks such as pulling APKs, installing agents, and generating exploit payloads like for doing tapjacking and task hijacking demos. Its interactive CLI interface makes navigation and execution intuitive, helping operators focus more on analysis and exploitation rather than setup overhead.
+**Redroid** is a modular toolkit designed to streamline Android application penetration testing. It automates common tasks such as:
 
-![image](static/redroid_menu.png)
+- Installing and configuring Burp certificates
+- Managing proxy settings
+- Extracting and signing APKs
+- Integrating with tools like **Frida**, **Drozer**, **MobSF**, **Nuclei**, **ApkLeaks**, and **TruffleHog**
+- Generating and testing payloads (e.g., **Tapjacking**, **Task Hijacking**)
 
-## Installation
+Its interactive CLI interface allows operators to focus on analysis and exploitation instead of setup and configuration overhead.
 
-### Using pipx (Recommended)
+![Menu Screenshot](static/redroid_menu.png)
 
-The easiest way to install Redroid is using pipx, which will install it in an isolated environment:
+---
+
+## 🚀 Installation
+
+### ✅ Install with `pipx` (Recommended)
+
+You can install Redroid directly from GitHub using:
 
 ```bash
-pipx install redroid
+pipx install git+https://github.com/samsepi01/Redroid.git
 ```
 
-After installation, you can run the tool from anywhere:
+Once installed, the `redroid` command will be available globally:
 
 ```bash
 redroid
 ```
 
-### Manual Installation
+### ⚙️ Manual Installation
 
 1. Clone the repository:
 ```bash
@@ -31,7 +41,7 @@ git clone https://github.com/samsepi01/Redroid.git
 cd Redroid
 ```
 
-2. Install dependencies:
+2. Install the dependencies:
 ```bash
 pip install -r requirements.txt
 ```
@@ -41,9 +51,9 @@ pip install -r requirements.txt
 python redroid.py
 ```
 
-### Development Installation
+### 🧪 Development Installation
 
-For development purposes, you can install in editable mode:
+To contribute or make changes locally:
 
 ```bash
 git clone https://github.com/samsepi01/Redroid.git
@@ -51,12 +61,15 @@ cd Redroid
 pip install -e .
 ```
 
-#### To do
-- [X] Multi devices handling
-- [X] Fix logic of existing functions (ex. mobsf)
-- [X] Add trufflehog security check on source code
-- [ ] Add firebase testing check
-- [ ] Add manual checks in the drozer menu 
-- [X] Add logcat stream check
-- [X] Automatic apk Sign/Patching
-- [ ] Make everything cross-platform (Windows <-> Kali Linux)
+---
+
+## 📋 TODO
+
+- [x] Multi-device support
+- [x] Fix logic for existing modules (e.g., MobSF integration)
+- [x] Add TruffleHog-based source scanning
+- [ ] Add Firebase testing capabilities
+- [ ] Add manual testing modules inside Drozer menu
+- [x] Implement real-time `logcat` streaming
+- [x] Automatic APK signing and patching
+- [ ] Ensure full cross-platform support (Windows ↔ Kali Linux)

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.7"
 license = {file = "LICENSE"}
 authors = [
-    {name = "samsepi01"},
+    {name = "YoruYagami"},
 ]
 keywords = ["android", "security", "testing", "frida", "emulator", "adb", "mobile", "pentesting"]
 classifiers = [
@@ -48,9 +48,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/samsepi01/Redroid"
-Repository = "https://github.com/samsepi01/Redroid"
-Issues = "https://github.com/samsepi01/Redroid/issues"
+Homepage = "https://github.com/YoruYagami/Redroid"
+Repository = "https://github.com/YoruYagami/Redroid"
+Issues = "https://github.com/YoruYagami/Redroid/issues"
 
 [project.scripts]
 redroid = "redroid:main"

@@ -23,11 +23,11 @@ def read_requirements():
 setup(
     name="redroid",
     version="1.0.0",
-    author="samsepi01",
+    author="YoruYagami",
     description="Android Security Testing Tool with Emulator Support",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/samsepi01/Redroid",
+    url="https://github.com/YoruYagami/Redroid",
     packages=find_packages(),
     py_modules=["redroid"],
     classifiers=[

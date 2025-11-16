@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""
+Frida SSL Pinning Bypass
+"""
+
+import subprocess
+import frida
+from colorama import Fore, Style
+import redroid.config as config
+from redroid.modules.target.target_app import list_relevant_apps
+
+def run_ssl_pinning_bypass():
+    """
+    Run SSL Pinning Bypass using Frida.
+    If a target application has been set using the global variable `target_app`,
+    that package is used automatically. Otherwise, the list of running apps is displayed for selection.
+    """
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
+    if not os.path.exists(script_path):
+        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
+        return
+    if not is_frida_server_running():
+        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
+        run_frida_server()
+        if not is_frida_server_running():
+            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with SSL Pinning Bypass." + Style.RESET_ALL)
+            return
+
+    # global config.target_app
+    if not config.target_app:
+        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
+        set_target_app()
+        if not config.target_app:
+            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
+            return
+    app_package = config.target_app
+    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
+    cmd = f'frida -U -f {app_package} -l "{script_path}"'
+    print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
+    open_new_terminal(cmd)
+
+

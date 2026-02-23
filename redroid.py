@@ -28,6 +28,9 @@ from colorama import init, Fore, Style
 # Initialize colorama
 init(autoreset=True)
 
+# Platform detection
+IS_WINDOWS = platform.system() == "Windows"
+
 # Global variables
 emulator_type = None
 emulator_installation_path = None
@@ -54,7 +57,7 @@ def detect_emulator():
             exe_path = process.info.get('exe', '')
             if not exe_path:
                 continue
-            # Linux naming conventions
+            # Process name matching (works for both Linux and Windows .exe names)
             if name and 'nox' in name.lower():
                 emulator_type = 'Nox'
                 emulator_installation_path = os.path.dirname(exe_path)
@@ -93,12 +96,46 @@ def connect_nox_adb_ports(adb_cmd):
 
 def get_adb_command(emulator_type, emulator_installation_path):
     """Return the adb command path based on the emulator type.
-       On Android, return None. On Linux, assume adb is in PATH.
+       On Android, return None. On Linux/Windows, try common paths then fall back to PATH.
     """
     if os.environ.get('ANDROID_ARGUMENT'):
         return None
 
-    # On Linux, just use 'adb' from PATH
+    # If emulator provides its own adb, use it
+    if emulator_installation_path:
+        if IS_WINDOWS:
+            candidate = os.path.join(emulator_installation_path, 'nox_adb.exe')
+            if os.path.exists(candidate):
+                return f'"{candidate}"'
+            candidate = os.path.join(emulator_installation_path, 'adb.exe')
+            if os.path.exists(candidate):
+                return f'"{candidate}"'
+        else:
+            candidate = os.path.join(emulator_installation_path, 'adb')
+            if os.path.exists(candidate):
+                return candidate
+
+    # Try common Windows SDK paths
+    if IS_WINDOWS:
+        possible_adb_paths = [
+            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'platform-tools', 'adb.exe'),
+            os.path.join(os.environ.get('ANDROID_HOME', ''), 'platform-tools', 'adb.exe'),
+            os.path.join(os.environ.get('ANDROID_SDK_ROOT', ''), 'platform-tools', 'adb.exe'),
+            os.path.join(os.environ.get('ProgramFiles', ''), 'Nox', 'bin', 'nox_adb.exe'),
+            os.path.join(os.environ.get('ProgramFiles(x86)', ''), 'Nox', 'bin', 'nox_adb.exe'),
+        ]
+        for adb_path in possible_adb_paths:
+            if adb_path and os.path.exists(adb_path):
+                return f'"{adb_path}"'
+
+    # Fall back to adb in PATH
+    if shutil.which('adb'):
+        return 'adb'
+
+    # Windows: also check for nox_adb in PATH
+    if IS_WINDOWS and shutil.which('nox_adb.exe'):
+        return 'nox_adb.exe'
+
     return 'adb'
 
 def get_connected_devices(adb_command):
@@ -301,20 +338,39 @@ def install_burpsuite_certificate(port):
 
 def run_android_studio_emulator():
     try:
-        # On Linux, emulator is typically in ~/Android/Sdk/emulator/
         home_dir = os.path.expanduser("~")
-        emulator_dir = os.path.join(home_dir, "Android", "Sdk", "emulator")
-        emulator_exe = os.path.join(emulator_dir, "emulator")
-        
-        if not os.path.exists(emulator_exe):
-            # Try alternative location
-            emulator_exe = shutil.which("emulator")
+        emulator_exe = None
+        emulator_dir = None
+
+        # Try platform-specific SDK locations
+        if IS_WINDOWS:
+            possible_dirs = [
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'emulator'),
+                os.path.join(home_dir, 'Android', 'Sdk', 'emulator'),
+                os.path.join(os.environ.get('ANDROID_HOME', ''), 'emulator'),
+                os.path.join(os.environ.get('ANDROID_SDK_ROOT', ''), 'emulator'),
+            ]
+            exe_name = 'emulator.exe'
+        else:
+            possible_dirs = [
+                os.path.join(home_dir, 'Android', 'Sdk', 'emulator'),
+            ]
+            exe_name = 'emulator'
+
+        for d in possible_dirs:
+            if d and os.path.exists(os.path.join(d, exe_name)):
+                emulator_dir = d
+                emulator_exe = os.path.join(d, exe_name)
+                break
+
+        if not emulator_exe or not os.path.exists(emulator_exe):
+            emulator_exe = shutil.which('emulator')
             if not emulator_exe:
                 print(Fore.RED + f"❌ Emulator not found. Please ensure Android SDK is installed." + Style.RESET_ALL)
                 return
             emulator_dir = os.path.dirname(emulator_exe)
         
-        list_command = f'{emulator_exe} -list-avds'
+        list_command = f'"{emulator_exe}" -list-avds'
         output = subprocess.check_output(list_command, shell=True, universal_newlines=True)
         avds = [line.strip() for line in output.strip().splitlines() if line.strip()]
         if not avds:
@@ -328,7 +384,10 @@ def run_android_studio_emulator():
             print(Fore.RED + "❌ Invalid selection." + Style.RESET_ALL)
             return
         selected_avd = avds[int(choice) - 1]
-        launch_command = f'cd {emulator_dir} && ./emulator -avd {selected_avd} -no-snapshot -writable-system &'
+        if IS_WINDOWS:
+            launch_command = f'start "" "{emulator_exe}" -avd {selected_avd} -no-snapshot -writable-system'
+        else:
+            launch_command = f'cd "{emulator_dir}" && ./emulator -avd {selected_avd} -no-snapshot -writable-system &'
         print(Fore.CYAN + f"Launching emulator in background: {launch_command}" + Style.RESET_ALL)
         subprocess.Popen(launch_command, shell=True)
     except Exception as e:
@@ -357,17 +416,28 @@ def get_emulator_ip():
 
 def run_command_in_background(cmd):
     """Run a command in the background."""
-    subprocess.Popen(f'{cmd} &', shell=True)
+    if IS_WINDOWS:
+        subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    else:
+        subprocess.Popen(f'{cmd} &', shell=True)
 
 def open_new_terminal(cmd):
     """Open a new terminal and execute the given command.
-       On Android, simply prints the command.
+       Supports Windows, Linux, and Android.
     """
     if os.environ.get('ANDROID_ARGUMENT'):
         print(Fore.YELLOW + "⚠️ open_new_terminal is not supported on Android. Run this command manually:" + Style.RESET_ALL)
         print(Fore.YELLOW + cmd + Style.RESET_ALL)
         return
     try:
+        if IS_WINDOWS:
+            # Try Windows Terminal first, then cmd.exe
+            if shutil.which('wt'):
+                subprocess.Popen(['wt', 'cmd', '/k', cmd])
+            else:
+                subprocess.Popen(f'start cmd /k "{cmd}"', shell=True)
+            return
+
         # Try common Linux terminal emulators
         terminal_emulators = [
             ('gnome-terminal', ['gnome-terminal', '--', 'bash', '-c', f'{cmd}; exec bash']),
@@ -537,11 +607,8 @@ def run_inline_logcat(highlight_strings, process_filter=None):
     logcat_output = []
     
     try:
-        # Build logcat command with optional process filter
+        # Build logcat command (without shell grep, filtering is done in Python)
         cmd = f'{adb_command} -s {device_serial} logcat'
-        if process_filter:
-            # Add process filter using grep
-            cmd += f' | grep "{process_filter}"'
         
         process = subprocess.Popen(
             cmd,
@@ -558,6 +625,10 @@ def run_inline_logcat(highlight_strings, process_filter=None):
             if line:
                 # Store the original line for saving
                 logcat_output.append(line.rstrip())
+                
+                # Apply process filter in Python (cross-platform, no grep needed)
+                if process_filter and process_filter.lower() not in line.lower():
+                    continue
                 
                 highlighted_line = highlight_line(line.rstrip())
                 print(highlighted_line)
@@ -769,7 +840,8 @@ def run_nuclei_against_apk():
     # Use apktool from PATH
     apktool_command = "apktool"
     try:
-        subprocess.run(shlex.split(f'{apktool_command} d "{apk_path}" -o "{output_dir}"'), check=True)
+        apktool_args = [apktool_command, 'd', apk_path, '-o', output_dir]
+        subprocess.run(apktool_args, check=True)
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Error: Failed to decompile APK. {e}\n")
         return
@@ -900,7 +972,8 @@ def run_trufflehog_against_apk():
         apktool_command = "apktool"
         try:
             print(Fore.CYAN + f"🔧 Decompiling APK with apktool..." + Style.RESET_ALL)
-            subprocess.run(shlex.split(f'{apktool_command} d "{apk_path}" -o "{output_dir}"'), check=True)
+            apktool_args = [apktool_command, 'd', apk_path, '-o', output_dir]
+            subprocess.run(apktool_args, check=True)
             print(Fore.GREEN + f"✅ APK decompiled successfully to {output_dir}" + Style.RESET_ALL)
         except subprocess.CalledProcessError as e:
             print(f"\n❌ Error: Failed to decompile APK. {e}\n")
@@ -912,8 +985,9 @@ def run_trufflehog_against_apk():
     # Run TruffleHog using Docker
     print(Fore.CYAN + f"🔍 Running TruffleHog on decompiled APK..." + Style.RESET_ALL)
     
-    # Use proper Unix path format
-    docker_cmd = f'docker run --rm -v "${{PWD}}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
+    # Use os.getcwd() for cross-platform Docker volume mount
+    cwd = os.getcwd().replace('\\', '/')
+    docker_cmd = f'docker run --rm -v "{cwd}:/pwd" trufflesecurity/trufflehog:latest filesystem /pwd/{os.path.basename(output_dir)} --results=verified,unknown'
     
     try:
         print(Fore.CYAN + f"🐷 Executing: {docker_cmd}" + Style.RESET_ALL)
@@ -1203,145 +1277,8 @@ def set_target_app():
     print(Fore.GREEN + f"✅ Target set to: {target_app}" + Style.RESET_ALL)
 
 # ============================================================
-#  Frida functions modified to use the global target (if set)
+#  Frida helper functions
 # ============================================================
-
-def run_ssl_pinning_bypass():
-    """
-    Run SSL Pinning Bypass using Frida.
-    If a target application has been set using the global variable `target_app`,
-    that package is used automatically. Otherwise, the list of running apps is displayed for selection.
-    """
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'ssl-pinning-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with SSL Pinning Bypass." + Style.RESET_ALL)
-            return
-
-    global target_app
-    if not target_app:
-        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
-            return
-    app_package = target_app
-    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
-    cmd = f'frida -U -f {app_package} -l "{script_path}"'
-    print(Fore.CYAN + f"🚀 Running SSL Pinning Bypass on {app_package}..." + Style.RESET_ALL)
-    open_new_terminal(cmd)
-
-def run_root_check_bypass():
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'root-check-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Root Check Bypass." + Style.RESET_ALL)
-            return
-    global target_app
-    if not target_app:
-        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
-            return
-    app_package = target_app
-    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
-    cmd = f'frida -U -f {app_package} -l "{script_path}"'
-    print(Fore.CYAN + f"🚀 Running Root Check Bypass on {app_package}..." + Style.RESET_ALL)
-    open_new_terminal(cmd)
-
-def android_biometric_bypass():
-    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts', 'android-biometric-bypass.js')
-    if not os.path.exists(script_path):
-        print(Fore.RED + f"❌ Script not found at {script_path}. Ensure the script is in the 'frida-scripts' directory." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with Android Biometric Bypass." + Style.RESET_ALL)
-            return
-    global target_app
-    if not target_app:
-        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
-            return
-    app_package = target_app
-    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
-    cmd = f'frida -U -f {app_package} -l "{script_path}"'
-    print(Fore.CYAN + f"🚀 Running Android Biometric Bypass on {app_package}..." + Style.RESET_ALL)
-    open_new_terminal(cmd)
-
-def run_custom_frida_script():
-    frida_scripts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frida-scripts')
-    known_scripts = {
-        'ssl-pinning-bypass.js',
-        'root-check-bypass.js',
-        'android-biometric-bypass.js'
-    }
-    if not os.path.exists(frida_scripts_dir):
-        print(Fore.RED + f"❌ 'frida-scripts' directory does not exist at {frida_scripts_dir}." + Style.RESET_ALL)
-        return
-
-    all_scripts = {f for f in os.listdir(frida_scripts_dir) if f.endswith('.js')}
-    unknown_scripts = all_scripts - known_scripts
-    script_path = None
-
-    if unknown_scripts:
-        print(Fore.CYAN + "\n🔍 Detected custom scripts in 'frida-scripts':" + Style.RESET_ALL)
-        unknown_scripts_list = list(unknown_scripts)
-        for idx, script in enumerate(unknown_scripts_list, 1):
-            print(f"{Fore.YELLOW}{idx}. {script}{Style.RESET_ALL}")
-        use_existing = input(Fore.CYAN + "✨ Execute one of these custom scripts? (y/n): " + Style.RESET_ALL).strip().lower()
-        if use_existing in ['y', 'yes']:
-            script_choice = input(f"🎯 Enter the number (1-{len(unknown_scripts_list)}): ").strip()
-            if script_choice.isdigit() and 1 <= int(script_choice) <= len(unknown_scripts_list):
-                script_path = os.path.join(frida_scripts_dir, unknown_scripts_list[int(script_choice) - 1])
-            else:
-                print(Fore.RED + "❌ Invalid choice. Exiting." + Style.RESET_ALL)
-                return
-        else:
-            print(Fore.YELLOW + "⚠️ It is recommended to place your custom script in 'frida-scripts'." + Style.RESET_ALL)
-            script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
-    else:
-        print(Fore.YELLOW + "⚠️ No custom scripts detected in 'frida-scripts'." + Style.RESET_ALL)
-        print(Fore.YELLOW + "⚠️ It is recommended to place your script in 'frida-scripts'." + Style.RESET_ALL)
-        script_path = input(Fore.CYAN + "📝 Enter the full path to your custom Frida script: " + Style.RESET_ALL).strip()
-
-    if not os.path.isfile(script_path):
-        print(Fore.RED + f"❌ The script '{script_path}' does not exist or is invalid." + Style.RESET_ALL)
-        return
-    if not is_frida_server_running():
-        print(Fore.YELLOW + "⚠️ Frida-Server is not running. Attempting to start it..." + Style.RESET_ALL)
-        run_frida_server()
-        if not is_frida_server_running():
-            print(Fore.RED + "❌ Frida-Server is not running. Cannot proceed with the custom script." + Style.RESET_ALL)
-            return
-    list_installed_applications()
-    global target_app
-    if not target_app:
-        print(Fore.YELLOW + "No target set. Please select a target application:" + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "No target set. Aborting operation." + Style.RESET_ALL)
-            return
-    app_package = target_app
-    print(Fore.GREEN + f"Using target application: {app_package}" + Style.RESET_ALL)
-    cmd = f'frida -U -f {app_package} -l "{script_path}"'
-    print(Fore.CYAN + f"🚀 Running custom Frida script on {app_package}..." + Style.RESET_ALL)
-    open_new_terminal(cmd)
 
 def auto_fridump():
     SESSION_FILE = "fridump_session.json"
@@ -1993,30 +1930,65 @@ def sign_apk(apk_path):
         print(Fore.RED + "❌ Invalid choice. APK will remain unsigned." + Style.RESET_ALL)
         return apk_path
 
+def get_activity_manually(package_name):
+    """
+    Prompt the user to manually enter an activity name.
+    Provides helpful hints about common activity naming patterns.
+    """
+    print(Fore.YELLOW + f"\n📝 Manual Activity Entry for: {package_name}" + Style.RESET_ALL)
+    print(f"Common patterns:")
+    print(f"  - {package_name}.MainActivity")
+    print(f"  - {package_name}.ui.login.LoginActivity")
+    print(f"  - {package_name}.SplashActivity")
+    activity = input(Fore.CYAN + "Enter the full activity name: " + Style.RESET_ALL).strip()
+    return activity
+
+
 def tapjacking_apk_builder():
     """
-    Fully automated APK generation for TapJacking PoC (Linux compatible).
-    Prompts for target app details and builds an unsigned APK.
+    Fully automated APK generation for TapJacking PoC.
+    Supports both Windows and Linux environments.
     """
     global target_app
 
-    # Check if target app is set, if not prompt to set it
-    if not target_app:
-        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
-            return
+    print(Fore.CYAN + "\n🎯 Target Selection" + Style.RESET_ALL)
+    print("1. Select from running apps (requires connected device)")
+    print("2. Enter package name manually")
 
-    package_name = target_app
+    sel = input(Fore.CYAN + "Choice (1/2): " + Style.RESET_ALL).strip()
+
+    if sel == '1':
+        if not target_app:
+            set_target_app()
+        if not target_app:
+            print(Fore.RED + "❌ No target app selected. Aborting." + Style.RESET_ALL)
+            return
+        package_name = target_app
+    else:
+        pkg = input(Fore.CYAN + "Enter package name (e.g., com.example.app): " + Style.RESET_ALL).strip()
+        if not pkg or '.' not in pkg:
+            print(Fore.RED + "❌ Invalid package name." + Style.RESET_ALL)
+            return
+        package_name = pkg
+        target_app = pkg
+
     print(Fore.GREEN + f"Using target app: {package_name}" + Style.RESET_ALL)
 
-    # Prompt for activity name
-    activity_name = input("Enter the exported activity name to test: ")
+    print(Fore.CYAN + "\n🎯 Activity Selection" + Style.RESET_ALL)
+    if device_serial and adb_command:
+        print("1. Enter activity name (connected device mode)")
+        print("2. Enter activity name manually")
+        act_sel = input(Fore.CYAN + "Choice (1/2): " + Style.RESET_ALL).strip()
+        if act_sel == '1':
+            activity_name = input("Enter the exported activity name to test: ").strip()
+        else:
+            activity_name = get_activity_manually(package_name)
+    else:
+        print(Fore.YELLOW + "⚠️ No device connected. Switching to manual activity entry." + Style.RESET_ALL)
+        activity_name = get_activity_manually(package_name)
 
-    # Validate inputs
     if not activity_name:
-        print("Error: Activity name cannot be empty.")
+        print(Fore.RED + "❌ Activity name is required." + Style.RESET_ALL)
         return
 
     print(f"\n{Fore.CYAN}Building tapjacking APK targeting:{Style.RESET_ALL}")
@@ -2024,26 +1996,32 @@ def tapjacking_apk_builder():
     print(f"- Activity: {activity_name}")
     print("-" * 40)
 
-    # Helper function
     def ensure_directory_exists(path):
-        """Create directory if it doesn't exist"""
         if not os.path.exists(path):
             os.makedirs(path)
 
-    # Setup paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.getcwd()
     project_dir = os.path.join(base_dir, "Tapjacking-ExportedActivity")
 
-    # Find Android SDK - Linux paths
+    # Find Android SDK
     sdk_path = None
-    possible_sdk_paths = [
-        os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
-        os.environ.get('ANDROID_SDK_ROOT'),
-        os.environ.get('ANDROID_HOME'),
-        "/opt/android-sdk",
-        "/usr/lib/android-sdk"
-    ]
-
+    possible_sdk_paths = []
+    if IS_WINDOWS:
+        possible_sdk_paths.extend([
+            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk'),
+            os.environ.get('ANDROID_SDK_ROOT'),
+            os.environ.get('ANDROID_HOME'),
+            os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
+            "C:\\Android\\Sdk",
+        ])
+    else:
+        possible_sdk_paths.extend([
+            os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
+            os.environ.get('ANDROID_SDK_ROOT'),
+            os.environ.get('ANDROID_HOME'),
+            "/opt/android-sdk",
+            "/usr/lib/android-sdk",
+        ])
     for path in possible_sdk_paths:
         if path and os.path.exists(path):
             sdk_path = path
@@ -2054,30 +2032,29 @@ def tapjacking_apk_builder():
         print(Fore.YELLOW + "Please set ANDROID_SDK_ROOT or ANDROID_HOME environment variable." + Style.RESET_ALL)
         return
 
-    # Find build tools
     build_tools_path = os.path.join(sdk_path, 'build-tools')
     if not os.path.exists(build_tools_path):
         print(Fore.RED + "Error: Android build tools not found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install build tools using Android Studio SDK Manager." + Style.RESET_ALL)
         return
 
-    # Get latest build tools version
-    versions = [d for d in os.listdir(build_tools_path) if os.path.isdir(os.path.join(build_tools_path, d))]
+    versions = [
+        d for d in os.listdir(build_tools_path)
+        if os.path.isdir(os.path.join(build_tools_path, d))
+        and re.match(r'^\d+\.\d+\.\d+$', d)
+    ]
     if not versions:
-        print(Fore.RED + "Error: No build tools versions found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install build tools using Android Studio SDK Manager." + Style.RESET_ALL)
+        print(Fore.RED + "Error: No valid build tools versions found." + Style.RESET_ALL)
+        print(Fore.YELLOW + "Run: sdkmanager 'build-tools;34.0.0' 'platforms;android-34'" + Style.RESET_ALL)
         return
 
-    latest_version = sorted(versions)[-1]
+    latest_version = sorted(versions, key=lambda v: list(map(int, v.split('.'))))[-1]
     tools_path = os.path.join(build_tools_path, latest_version)
     print(Fore.GREEN + f"✅ Using build tools version: {latest_version}" + Style.RESET_ALL)
 
-    # Setup project structure
     print(Fore.CYAN + "Setting up project..." + Style.RESET_ALL)
     if os.path.exists(project_dir):
         shutil.rmtree(project_dir)
 
-    # Create project directories
     src_dir = os.path.join(project_dir, "src")
     java_dir = os.path.join(src_dir, "com", "tapjacking", "demo")
     res_dir = os.path.join(project_dir, "res")
@@ -2086,7 +2063,6 @@ def tapjacking_apk_builder():
     ensure_directory_exists(os.path.join(res_dir, "layout"))
     ensure_directory_exists(os.path.join(res_dir, "values"))
 
-    # Write Android Manifest
     manifest = f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.tapjacking.demo">
@@ -2112,7 +2088,6 @@ def tapjacking_apk_builder():
     with open(os.path.join(project_dir, "AndroidManifest.xml"), 'w') as f:
         f.write(manifest)
 
-    # Write layout file
     layout = '''<?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -2129,7 +2104,6 @@ def tapjacking_apk_builder():
     with open(os.path.join(res_dir, "layout", "overlay_layout.xml"), 'w') as f:
         f.write(layout)
 
-    # Write strings.xml
     strings = '''<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TapjackingDemo</string>
@@ -2138,7 +2112,6 @@ def tapjacking_apk_builder():
     with open(os.path.join(res_dir, "values", "strings.xml"), 'w') as f:
         f.write(strings)
 
-    # Write MainActivity.java
     main_activity = f'''
 package com.tapjacking.demo;
 
@@ -2186,7 +2159,6 @@ public class MainActivity extends Activity {{
     with open(os.path.join(java_dir, "MainActivity.java"), 'w') as f:
         f.write(main_activity)
 
-    # Write OverlayService.java
     overlay_service = f'''
 package com.tapjacking.demo;
 
@@ -2277,36 +2249,40 @@ public class OverlayService extends Service {{
     with open(os.path.join(java_dir, "OverlayService.java"), 'w') as f:
         f.write(overlay_service)
 
-    # Find Java - prefer system Java, fallback to Android Studio's
+    # Find Java JDK
     java_home = os.environ.get('JAVA_HOME')
     if not java_home or not os.path.exists(java_home):
-        # Try to find Android Studio's JDK on Linux
-        possible_jdk_paths = [
-            "/opt/android-studio/jbr",
-            os.path.join(os.path.expanduser("~"), "android-studio", "jbr"),
-            "/usr/lib/jvm/default-java",
-            "/usr/lib/jvm/java-11-openjdk-amd64",
-            "/usr/lib/jvm/java-17-openjdk-amd64"
-        ]
-
+        possible_jdk_paths = []
+        if IS_WINDOWS:
+            possible_jdk_paths.extend([
+                os.path.join(os.environ.get('ProgramFiles', ''), 'Android', 'Android Studio', 'jbr'),
+                os.path.join(os.environ.get('ProgramFiles', ''), 'Java'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Android Studio', 'jbr'),
+            ])
+        else:
+            possible_jdk_paths.extend([
+                "/opt/android-studio/jbr",
+                os.path.join(os.path.expanduser("~"), "android-studio", "jbr"),
+                "/usr/lib/jvm/default-java",
+                "/usr/lib/jvm/java-11-openjdk-amd64",
+                "/usr/lib/jvm/java-17-openjdk-amd64",
+            ])
         for path in possible_jdk_paths:
             if os.path.exists(path):
                 java_home = path
                 break
 
     if not java_home or not os.path.exists(java_home):
-        # Try using system javac
         javac_path = shutil.which('javac')
         if javac_path:
             java_home = os.path.dirname(os.path.dirname(javac_path))
         else:
             print(Fore.RED + "Error: Java JDK not found." + Style.RESET_ALL)
-            print(Fore.YELLOW + "Please install JDK or set JAVA_HOME environment variable." + Style.RESET_ALL)
             return
 
+    # Set JAVA_HOME explicitly
+    os.environ['JAVA_HOME'] = java_home
     print(Fore.GREEN + f"✅ Using Java from: {java_home}" + Style.RESET_ALL)
-
-    # Build APK using Android build tools
     print(Fore.CYAN + "Building APK..." + Style.RESET_ALL)
 
     # Find android.jar
@@ -2319,25 +2295,25 @@ public class OverlayService extends Service {{
 
     if not android_jar or not os.path.exists(android_jar):
         print(Fore.RED + "Error: android.jar not found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install Android platforms using SDK Manager." + Style.RESET_ALL)
+        print(Fore.YELLOW + "Run: sdkmanager 'platforms;android-34'" + Style.RESET_ALL)
         return
 
     print(Fore.GREEN + f"✅ Using android.jar from: {android_jar}" + Style.RESET_ALL)
 
     # 1. Compile resources
     print(Fore.CYAN + "📦 Compiling resources..." + Style.RESET_ALL)
-    aapt = os.path.join(tools_path, "aapt")
+    aapt = os.path.join(tools_path, "aapt" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(aapt):
         print(Fore.RED + "Error: aapt not found." + Style.RESET_ALL)
         return
 
     try:
         subprocess.run([aapt, "package", "-f", "-m",
-                       "-J", src_dir,
-                       "-M", os.path.join(project_dir, "AndroidManifest.xml"),
-                       "-S", res_dir,
-                       "-I", android_jar],
-                      check=True, capture_output=True, text=True)
+                        "-J", src_dir,
+                        "-M", os.path.join(project_dir, "AndroidManifest.xml"),
+                        "-S", res_dir,
+                        "-I", android_jar],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ Resources compiled successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error compiling resources: {e.stderr}" + Style.RESET_ALL)
@@ -2345,14 +2321,13 @@ public class OverlayService extends Service {{
 
     # 2. Compile Java files
     print(Fore.CYAN + "☕ Compiling Java files..." + Style.RESET_ALL)
-    javac = os.path.join(java_home, "bin", "javac")
+    javac = os.path.join(java_home, "bin", "javac" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(javac):
         javac = shutil.which('javac')
         if not javac:
             print(Fore.RED + "Error: javac not found." + Style.RESET_ALL)
             return
 
-    # Create classes directory
     classes_dir = os.path.join(project_dir, "classes")
     ensure_directory_exists(classes_dir)
 
@@ -2364,11 +2339,10 @@ public class OverlayService extends Service {{
 
     try:
         subprocess.run([javac,
-                       "-source", "1.8",
-                       "-target", "1.8",
-                       "-bootclasspath", android_jar,
-                       "-d", classes_dir] + java_files,
-                      check=True, capture_output=True, text=True)
+                        "--release", "8",
+                        "-classpath", android_jar,
+                        "-d", classes_dir] + java_files,
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ Java files compiled successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error compiling Java files: {e.stderr}" + Style.RESET_ALL)
@@ -2376,7 +2350,7 @@ public class OverlayService extends Service {{
 
     # 3. Create JAR file
     print(Fore.CYAN + "📚 Creating JAR file..." + Style.RESET_ALL)
-    jar = os.path.join(java_home, "bin", "jar")
+    jar = os.path.join(java_home, "bin", "jar" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(jar):
         jar = shutil.which('jar')
         if not jar:
@@ -2384,13 +2358,11 @@ public class OverlayService extends Service {{
             return
 
     classes_jar = os.path.join(project_dir, "classes.jar")
-
-    # Change to classes directory to create jar with correct structure
     current_dir = os.getcwd()
     os.chdir(classes_dir)
     try:
         subprocess.run([jar, "cf", classes_jar, "com"],
-                      check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ JAR file created successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error creating JAR: {e.stderr}" + Style.RESET_ALL)
@@ -2401,75 +2373,67 @@ public class OverlayService extends Service {{
 
     # 4. Convert JAR to DEX
     print(Fore.CYAN + "🔄 Converting to DEX format..." + Style.RESET_ALL)
-    d8 = os.path.join(tools_path, "d8")
+    d8 = os.path.join(tools_path, "d8" + (".bat" if IS_WINDOWS else ""))
     if not os.path.exists(d8):
         print(Fore.RED + "Error: d8 not found." + Style.RESET_ALL)
         return
 
-    # Create output directory
     dex_output_dir = os.path.join(project_dir, "dex-output")
     ensure_directory_exists(dex_output_dir)
 
     try:
         subprocess.run([d8,
-                       "--lib", android_jar,
-                       "--output", dex_output_dir,
-                       classes_jar],
-                      check=True, capture_output=True, text=True)
+                        "--lib", android_jar,
+                        "--min-api", "24",
+                        "--output", dex_output_dir,
+                        classes_jar],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ DEX conversion successful." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error converting to DEX: {e.stderr}" + Style.RESET_ALL)
         return
 
-    # Move the classes.dex file
     shutil.copy2(os.path.join(dex_output_dir, "classes.dex"),
-                os.path.join(project_dir, "classes.dex"))
+                 os.path.join(project_dir, "classes.dex"))
 
-    # 5. Build APK using Android Build Tools
+    # 5. Package APK
     print(Fore.CYAN + "📱 Packaging APK..." + Style.RESET_ALL)
     output_apk = os.path.join(base_dir, "tapjacking.apk")
 
     try:
         subprocess.run([aapt, "package", "-f", "-M",
-                       os.path.join(project_dir, "AndroidManifest.xml"),
-                       "-S", res_dir,
-                       "-I", android_jar,
-                       "--min-sdk-version", "24",
-                       "--target-sdk-version", "28",
-                       "-F", output_apk],
-                      check=True, capture_output=True, text=True)
+                        os.path.join(project_dir, "AndroidManifest.xml"),
+                        "-S", res_dir,
+                        "-I", android_jar,
+                        "--min-sdk-version", "24",
+                        "--target-sdk-version", "34",
+                        "-F", output_apk],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ APK packaged successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error packaging APK: {e.stderr}" + Style.RESET_ALL)
         return
 
-    # Copy DEX file to current directory for easier adding
     temp_dex = os.path.join(base_dir, "classes.dex")
     shutil.copy2(os.path.join(project_dir, "classes.dex"), temp_dex)
 
-    # Add the DEX file
     try:
         subprocess.run([aapt, "add", output_apk, "classes.dex"],
-                      check=True, capture_output=True, text=True, cwd=base_dir)
+                       check=True, capture_output=True, text=True, cwd=base_dir)
         print(Fore.GREEN + "✅ DEX file added to APK." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error adding DEX to APK: {e.stderr}" + Style.RESET_ALL)
         return
     finally:
-        # Clean up
         if os.path.exists(temp_dex):
             os.remove(temp_dex)
 
-    # APK is unsigned at this point
     print(Fore.GREEN + "✅ APK generation complete (unsigned)." + Style.RESET_ALL)
     print(f"\n{Fore.CYAN}Build successful! APK generated at: {output_apk}{Style.RESET_ALL}")
 
-    # Ask user if they want to sign the APK
     signed_apk = sign_apk(output_apk)
     if signed_apk and signed_apk != output_apk:
         print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
-
-        # Ask if user wants to install
         install_choice = input(Fore.CYAN + "\nDo you want to install the APK on the connected device? (y/n): " + Style.RESET_ALL).strip().lower()
         if install_choice in ['y', 'yes']:
             if device_serial and adb_command:
@@ -2480,35 +2444,56 @@ public class OverlayService extends Service {{
                     print(Fore.RED + "❌ APK installation failed." + Style.RESET_ALL)
             else:
                 print(Fore.RED + "❌ No device connected." + Style.RESET_ALL)
-
         return signed_apk
     else:
         return output_apk
 
+
 def task_hijacking_apk_builder():
     """
-    Fully automated APK generation for Task Hijacking PoC (Linux compatible).
-    Prompts for target app details and builds an unsigned APK.
+    Fully automated APK generation for Task Hijacking PoC.
+    Supports both Windows and Linux environments.
     """
     global target_app
 
-    # Check if target app is set, if not prompt to set it
-    if not target_app:
-        print(Fore.YELLOW + "⚠️ No target app set. Please select a target app first." + Style.RESET_ALL)
-        set_target_app()
-        if not target_app:
-            print(Fore.RED + "❌ No target app selected. Aborting APK build." + Style.RESET_ALL)
-            return
+    print(Fore.CYAN + "\n🎯 Target Selection" + Style.RESET_ALL)
+    print("1. Select from running apps (requires connected device)")
+    print("2. Enter package name manually")
 
-    target_package = target_app
+    sel = input(Fore.CYAN + "Choice (1/2): " + Style.RESET_ALL).strip()
+
+    if sel == '1':
+        if not target_app:
+            set_target_app()
+        if not target_app:
+            print(Fore.RED + "❌ No target app selected. Aborting." + Style.RESET_ALL)
+            return
+        target_package = target_app
+    else:
+        pkg = input(Fore.CYAN + "Enter package name (e.g., com.example.app): " + Style.RESET_ALL).strip()
+        if not pkg or '.' not in pkg:
+            print(Fore.RED + "❌ Invalid package name." + Style.RESET_ALL)
+            return
+        target_package = pkg
+        target_app = pkg
+
     print(Fore.GREEN + f"Using target app: {target_package}" + Style.RESET_ALL)
 
-    # Prompt for activity name
-    target_activity = input("Enter the target activity name to hijack: ")
+    print(Fore.CYAN + "\n🎯 Activity Selection" + Style.RESET_ALL)
+    if device_serial and adb_command:
+        print("1. Enter activity name (connected device mode)")
+        print("2. Enter activity name manually")
+        act_sel = input(Fore.CYAN + "Choice (1/2): " + Style.RESET_ALL).strip()
+        if act_sel == '1':
+            target_activity = input("Enter the target activity name to hijack: ").strip()
+        else:
+            target_activity = get_activity_manually(target_package)
+    else:
+        print(Fore.YELLOW + "⚠️ No device connected. Switching to manual activity entry." + Style.RESET_ALL)
+        target_activity = get_activity_manually(target_package)
 
-    # Validate inputs
     if not target_activity:
-        print("Error: Activity name cannot be empty.")
+        print(Fore.RED + "❌ Activity name is required." + Style.RESET_ALL)
         return
 
     print(f"\n{Fore.CYAN}Building task hijacking APK targeting:{Style.RESET_ALL}")
@@ -2516,26 +2501,32 @@ def task_hijacking_apk_builder():
     print(f"- Activity: {target_activity}")
     print("-" * 40)
 
-    # Helper function
     def ensure_directory_exists(path):
-        """Create directory if it doesn't exist"""
         if not os.path.exists(path):
             os.makedirs(path)
 
-    # Setup paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = os.getcwd()
     project_dir = os.path.join(base_dir, "Task-Hijacking-PoC")
 
-    # Find Android SDK - Linux paths
+    # Find Android SDK
     sdk_path = None
-    possible_sdk_paths = [
-        os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
-        os.environ.get('ANDROID_SDK_ROOT'),
-        os.environ.get('ANDROID_HOME'),
-        "/opt/android-sdk",
-        "/usr/lib/android-sdk"
-    ]
-
+    possible_sdk_paths = []
+    if IS_WINDOWS:
+        possible_sdk_paths.extend([
+            os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk'),
+            os.environ.get('ANDROID_SDK_ROOT'),
+            os.environ.get('ANDROID_HOME'),
+            os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
+            "C:\\Android\\Sdk",
+        ])
+    else:
+        possible_sdk_paths.extend([
+            os.path.join(os.path.expanduser("~"), "Android", "Sdk"),
+            os.environ.get('ANDROID_SDK_ROOT'),
+            os.environ.get('ANDROID_HOME'),
+            "/opt/android-sdk",
+            "/usr/lib/android-sdk",
+        ])
     for path in possible_sdk_paths:
         if path and os.path.exists(path):
             sdk_path = path
@@ -2546,30 +2537,29 @@ def task_hijacking_apk_builder():
         print(Fore.YELLOW + "Please set ANDROID_SDK_ROOT or ANDROID_HOME environment variable." + Style.RESET_ALL)
         return
 
-    # Find build tools
     build_tools_path = os.path.join(sdk_path, 'build-tools')
     if not os.path.exists(build_tools_path):
         print(Fore.RED + "Error: Android build tools not found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install build tools using Android Studio SDK Manager." + Style.RESET_ALL)
         return
 
-    # Get latest build tools version
-    versions = [d for d in os.listdir(build_tools_path) if os.path.isdir(os.path.join(build_tools_path, d))]
+    versions = [
+        d for d in os.listdir(build_tools_path)
+        if os.path.isdir(os.path.join(build_tools_path, d))
+        and re.match(r'^\d+\.\d+\.\d+$', d)
+    ]
     if not versions:
-        print(Fore.RED + "Error: No build tools versions found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install build tools using Android Studio SDK Manager." + Style.RESET_ALL)
+        print(Fore.RED + "Error: No valid build tools versions found." + Style.RESET_ALL)
+        print(Fore.YELLOW + "Run: sdkmanager 'build-tools;34.0.0' 'platforms;android-34'" + Style.RESET_ALL)
         return
 
-    latest_version = sorted(versions)[-1]
+    latest_version = sorted(versions, key=lambda v: list(map(int, v.split('.'))))[-1]
     tools_path = os.path.join(build_tools_path, latest_version)
     print(Fore.GREEN + f"✅ Using build tools version: {latest_version}" + Style.RESET_ALL)
 
-    # Setup project structure
     print(Fore.CYAN + "Setting up project..." + Style.RESET_ALL)
     if os.path.exists(project_dir):
         shutil.rmtree(project_dir)
 
-    # Create project directories
     src_dir = os.path.join(project_dir, "src")
     java_dir = os.path.join(src_dir, "com", "taskhijack", "poc")
     res_dir = os.path.join(project_dir, "res")
@@ -2578,7 +2568,6 @@ def task_hijacking_apk_builder():
     ensure_directory_exists(os.path.join(res_dir, "layout"))
     ensure_directory_exists(os.path.join(res_dir, "values"))
 
-    # Write Android Manifest
     manifest = f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.taskhijack.poc">
@@ -2607,7 +2596,6 @@ def task_hijacking_apk_builder():
     with open(os.path.join(project_dir, "AndroidManifest.xml"), 'w') as f:
         f.write(manifest)
 
-    # Write main layout file
     main_layout = '''<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -2631,7 +2619,6 @@ def task_hijacking_apk_builder():
     with open(os.path.join(res_dir, "layout", "activity_main.xml"), 'w') as f:
         f.write(main_layout)
 
-    # Write phishing layout file
     phishing_layout = '''<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -2676,7 +2663,6 @@ def task_hijacking_apk_builder():
     with open(os.path.join(res_dir, "layout", "activity_phishing.xml"), 'w') as f:
         f.write(phishing_layout)
 
-    # Write strings.xml
     strings = '''<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TaskHijackPoC</string>
@@ -2685,7 +2671,6 @@ def task_hijacking_apk_builder():
     with open(os.path.join(res_dir, "values", "strings.xml"), 'w') as f:
         f.write(strings)
 
-    # Write MainActivity.java
     main_activity = f'''
 package com.taskhijack.poc;
 
@@ -2712,7 +2697,6 @@ public class MainActivity extends Activity {{
     }}
 
     private void launchTargetApp() {{
-        // Launch the target activity
         Intent targetIntent = new Intent();
         targetIntent.setClassName("{target_package}", "{target_activity}");
         targetIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -2720,7 +2704,6 @@ public class MainActivity extends Activity {{
         try {{
             startActivity(targetIntent);
 
-            // Wait a short time then launch phishing activity
             new Handler().postDelayed(new Runnable() {{
                 @Override
                 public void run() {{
@@ -2738,7 +2721,6 @@ public class MainActivity extends Activity {{
     with open(os.path.join(java_dir, "MainActivity.java"), 'w') as f:
         f.write(main_activity)
 
-    # Write PhishingActivity.java
     phishing_activity = '''
 package com.taskhijack.poc;
 
@@ -2765,7 +2747,6 @@ public class PhishingActivity extends Activity {
                 String username = usernameEdit.getText().toString();
                 String password = passwordEdit.getText().toString();
 
-                // In a real attack, credentials would be exfiltrated here
                 Toast.makeText(PhishingActivity.this,
                     "Captured: " + username,
                     Toast.LENGTH_LONG).show();
@@ -2779,36 +2760,40 @@ public class PhishingActivity extends Activity {
     with open(os.path.join(java_dir, "PhishingActivity.java"), 'w') as f:
         f.write(phishing_activity)
 
-    # Find Java - prefer system Java, fallback to Android Studio's
+    # Find Java JDK
     java_home = os.environ.get('JAVA_HOME')
     if not java_home or not os.path.exists(java_home):
-        # Try to find Android Studio's JDK on Linux
-        possible_jdk_paths = [
-            "/opt/android-studio/jbr",
-            os.path.join(os.path.expanduser("~"), "android-studio", "jbr"),
-            "/usr/lib/jvm/default-java",
-            "/usr/lib/jvm/java-11-openjdk-amd64",
-            "/usr/lib/jvm/java-17-openjdk-amd64"
-        ]
-
+        possible_jdk_paths = []
+        if IS_WINDOWS:
+            possible_jdk_paths.extend([
+                os.path.join(os.environ.get('ProgramFiles', ''), 'Android', 'Android Studio', 'jbr'),
+                os.path.join(os.environ.get('ProgramFiles', ''), 'Java'),
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'Android Studio', 'jbr'),
+            ])
+        else:
+            possible_jdk_paths.extend([
+                "/opt/android-studio/jbr",
+                os.path.join(os.path.expanduser("~"), "android-studio", "jbr"),
+                "/usr/lib/jvm/default-java",
+                "/usr/lib/jvm/java-11-openjdk-amd64",
+                "/usr/lib/jvm/java-17-openjdk-amd64",
+            ])
         for path in possible_jdk_paths:
             if os.path.exists(path):
                 java_home = path
                 break
 
     if not java_home or not os.path.exists(java_home):
-        # Try using system javac
         javac_path = shutil.which('javac')
         if javac_path:
             java_home = os.path.dirname(os.path.dirname(javac_path))
         else:
             print(Fore.RED + "Error: Java JDK not found." + Style.RESET_ALL)
-            print(Fore.YELLOW + "Please install JDK or set JAVA_HOME environment variable." + Style.RESET_ALL)
             return
 
+    # Set JAVA_HOME explicitly
+    os.environ['JAVA_HOME'] = java_home
     print(Fore.GREEN + f"✅ Using Java from: {java_home}" + Style.RESET_ALL)
-
-    # Build APK using Android build tools
     print(Fore.CYAN + "Building APK..." + Style.RESET_ALL)
 
     # Find android.jar
@@ -2821,25 +2806,25 @@ public class PhishingActivity extends Activity {
 
     if not android_jar or not os.path.exists(android_jar):
         print(Fore.RED + "Error: android.jar not found." + Style.RESET_ALL)
-        print(Fore.YELLOW + "Please install Android platforms using SDK Manager." + Style.RESET_ALL)
+        print(Fore.YELLOW + "Run: sdkmanager 'platforms;android-34'" + Style.RESET_ALL)
         return
 
     print(Fore.GREEN + f"✅ Using android.jar from: {android_jar}" + Style.RESET_ALL)
 
     # 1. Compile resources
     print(Fore.CYAN + "📦 Compiling resources..." + Style.RESET_ALL)
-    aapt = os.path.join(tools_path, "aapt")
+    aapt = os.path.join(tools_path, "aapt" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(aapt):
         print(Fore.RED + "Error: aapt not found." + Style.RESET_ALL)
         return
 
     try:
         subprocess.run([aapt, "package", "-f", "-m",
-                       "-J", src_dir,
-                       "-M", os.path.join(project_dir, "AndroidManifest.xml"),
-                       "-S", res_dir,
-                       "-I", android_jar],
-                      check=True, capture_output=True, text=True)
+                        "-J", src_dir,
+                        "-M", os.path.join(project_dir, "AndroidManifest.xml"),
+                        "-S", res_dir,
+                        "-I", android_jar],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ Resources compiled successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error compiling resources: {e.stderr}" + Style.RESET_ALL)
@@ -2847,14 +2832,13 @@ public class PhishingActivity extends Activity {
 
     # 2. Compile Java files
     print(Fore.CYAN + "☕ Compiling Java files..." + Style.RESET_ALL)
-    javac = os.path.join(java_home, "bin", "javac")
+    javac = os.path.join(java_home, "bin", "javac" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(javac):
         javac = shutil.which('javac')
         if not javac:
             print(Fore.RED + "Error: javac not found." + Style.RESET_ALL)
             return
 
-    # Create classes directory
     classes_dir = os.path.join(project_dir, "classes")
     ensure_directory_exists(classes_dir)
 
@@ -2866,11 +2850,10 @@ public class PhishingActivity extends Activity {
 
     try:
         subprocess.run([javac,
-                       "-source", "1.8",
-                       "-target", "1.8",
-                       "-bootclasspath", android_jar,
-                       "-d", classes_dir] + java_files,
-                      check=True, capture_output=True, text=True)
+                        "--release", "8",
+                        "-classpath", android_jar,
+                        "-d", classes_dir] + java_files,
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ Java files compiled successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error compiling Java files: {e.stderr}" + Style.RESET_ALL)
@@ -2878,7 +2861,7 @@ public class PhishingActivity extends Activity {
 
     # 3. Create JAR file
     print(Fore.CYAN + "📚 Creating JAR file..." + Style.RESET_ALL)
-    jar = os.path.join(java_home, "bin", "jar")
+    jar = os.path.join(java_home, "bin", "jar" + (".exe" if IS_WINDOWS else ""))
     if not os.path.exists(jar):
         jar = shutil.which('jar')
         if not jar:
@@ -2886,13 +2869,11 @@ public class PhishingActivity extends Activity {
             return
 
     classes_jar = os.path.join(project_dir, "classes.jar")
-
-    # Change to classes directory to create jar with correct structure
     current_dir = os.getcwd()
     os.chdir(classes_dir)
     try:
         subprocess.run([jar, "cf", classes_jar, "com"],
-                      check=True, capture_output=True, text=True)
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ JAR file created successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error creating JAR: {e.stderr}" + Style.RESET_ALL)
@@ -2903,75 +2884,67 @@ public class PhishingActivity extends Activity {
 
     # 4. Convert JAR to DEX
     print(Fore.CYAN + "🔄 Converting to DEX format..." + Style.RESET_ALL)
-    d8 = os.path.join(tools_path, "d8")
+    d8 = os.path.join(tools_path, "d8" + (".bat" if IS_WINDOWS else ""))
     if not os.path.exists(d8):
         print(Fore.RED + "Error: d8 not found." + Style.RESET_ALL)
         return
 
-    # Create output directory
     dex_output_dir = os.path.join(project_dir, "dex-output")
     ensure_directory_exists(dex_output_dir)
 
     try:
         subprocess.run([d8,
-                       "--lib", android_jar,
-                       "--output", dex_output_dir,
-                       classes_jar],
-                      check=True, capture_output=True, text=True)
+                        "--lib", android_jar,
+                        "--min-api", "24",
+                        "--output", dex_output_dir,
+                        classes_jar],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ DEX conversion successful." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error converting to DEX: {e.stderr}" + Style.RESET_ALL)
         return
 
-    # Move the classes.dex file
     shutil.copy2(os.path.join(dex_output_dir, "classes.dex"),
-                os.path.join(project_dir, "classes.dex"))
+                 os.path.join(project_dir, "classes.dex"))
 
-    # 5. Build APK using Android Build Tools
+    # 5. Package APK
     print(Fore.CYAN + "📱 Packaging APK..." + Style.RESET_ALL)
     output_apk = os.path.join(base_dir, "task_hijacking.apk")
 
     try:
         subprocess.run([aapt, "package", "-f", "-M",
-                       os.path.join(project_dir, "AndroidManifest.xml"),
-                       "-S", res_dir,
-                       "-I", android_jar,
-                       "--min-sdk-version", "24",
-                       "--target-sdk-version", "28",
-                       "-F", output_apk],
-                      check=True, capture_output=True, text=True)
+                        os.path.join(project_dir, "AndroidManifest.xml"),
+                        "-S", res_dir,
+                        "-I", android_jar,
+                        "--min-sdk-version", "24",
+                        "--target-sdk-version", "34",
+                        "-F", output_apk],
+                       check=True, capture_output=True, text=True)
         print(Fore.GREEN + "✅ APK packaged successfully." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error packaging APK: {e.stderr}" + Style.RESET_ALL)
         return
 
-    # Copy DEX file to current directory for easier adding
     temp_dex = os.path.join(base_dir, "classes.dex")
     shutil.copy2(os.path.join(project_dir, "classes.dex"), temp_dex)
 
-    # Add the DEX file
     try:
         subprocess.run([aapt, "add", output_apk, "classes.dex"],
-                      check=True, capture_output=True, text=True, cwd=base_dir)
+                       check=True, capture_output=True, text=True, cwd=base_dir)
         print(Fore.GREEN + "✅ DEX file added to APK." + Style.RESET_ALL)
     except subprocess.CalledProcessError as e:
         print(Fore.RED + f"Error adding DEX to APK: {e.stderr}" + Style.RESET_ALL)
         return
     finally:
-        # Clean up
         if os.path.exists(temp_dex):
             os.remove(temp_dex)
 
-    # APK is unsigned at this point
     print(Fore.GREEN + "✅ APK generation complete (unsigned)." + Style.RESET_ALL)
     print(f"\n{Fore.CYAN}Build successful! APK generated at: {output_apk}{Style.RESET_ALL}")
 
-    # Ask user if they want to sign the APK
     signed_apk = sign_apk(output_apk)
     if signed_apk and signed_apk != output_apk:
         print(f"\n{Fore.GREEN}✅ Final signed APK: {signed_apk}{Style.RESET_ALL}")
-
-        # Ask if user wants to install
         install_choice = input(Fore.CYAN + "\nDo you want to install the APK on the connected device? (y/n): " + Style.RESET_ALL).strip().lower()
         if install_choice in ['y', 'yes']:
             if device_serial and adb_command:
@@ -2982,12 +2955,16 @@ public class PhishingActivity extends Activity {
                     print(Fore.RED + "❌ APK installation failed." + Style.RESET_ALL)
             else:
                 print(Fore.RED + "❌ No device connected." + Style.RESET_ALL)
-
         return signed_apk
     else:
         return output_apk
 
 def drozer_vulnscan():
+    """
+    Automated drozer vulnerability scan for a target Android app.
+    Runs comprehensive security checks and outputs JSON + HTML reports.
+    Compatible with both Windows and Linux.
+    """
     global target_app
     html_begin = "<html><head><title>APP Analysis Report</title></head><body><h1 style=\"text-align: center;\"><strong>Drozer Analysis Report</strong></h1>"
     separator = "_" * 100 + "\n"
@@ -3006,123 +2983,155 @@ def drozer_vulnscan():
     f_json = file_name + ".json"
     f_html = file_name + ".html"
     
-    def perform_scan(query_type, p_name, a=0):
-        drozer_command = 'drozer console connect -c "run ' + str(query_type) + ' ' + str(p_name) + '"'
-        if a == 1:
-            drozer_command = 'drozer console connect -c "run ' + str(query_type) + ' "'
-        process = subprocess.Popen(drozer_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   shell=True, universal_newlines=True)
-        input_stream, output_stream = process.stdin, process.stdout
-        process_data = output_stream.read()
-        input_stream.close()
-        output_stream.close()
-        process.wait()
-        if process_data.find("could not find the package") != -1:
-            process_data = 'Invalid Package'
-        return process_data
+    # Clear output files if they already exist
+    for f in [f_json, f_html]:
+        if os.path.exists(f):
+            os.remove(f)
+    
+    def perform_scan(module_and_args, package_name=None):
+        """
+        Run a drozer module via 'drozer console connect -c "run <module> [package]"'.
+        If package_name is None, the module is run without appending a package name
+        (useful for modules that take path args or no args).
+        """
+        if package_name:
+            cmd_str = f'run {module_and_args} {package_name}'
+        else:
+            cmd_str = f'run {module_and_args}'
+        
+        # Build the drozer command
+        drozer_command = f'drozer console connect -c "{cmd_str}"'
+        
+        try:
+            process = subprocess.Popen(
+                drozer_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=True,
+                universal_newlines=True
+            )
+            stdout, stderr = process.communicate(timeout=120)
+            process_data = stdout
+            
+            if process_data and "could not find the package" in process_data:
+                process_data = 'Invalid Package'
+            
+            # Check for errors
+            if stderr and stderr.strip():
+                if not process_data or process_data.strip() == '':
+                    process_data = f'Error: {stderr.strip()}'
+            
+            return process_data if process_data else '(No output returned)'
+            
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return '(Scan timed out after 120 seconds)'
+        except FileNotFoundError:
+            return '(Error: drozer not found in PATH. Make sure drozer is installed and accessible.)'
+        except Exception as e:
+            return f'(Error running scan: {str(e)})'
 
     def format_data(task, result, file_name):
+        """Format and save scan results to JSON and HTML."""
         nonlocal html_begin
-        html_out = 1
         sep = "*" * 50
-        print(Fore.GREEN + "\n%s:\n%s\n%s" % (task, sep, result))
+        print(Fore.GREEN + "\n%s:\n%s\n%s" % (task, sep, result) + Style.RESET_ALL)
         result_html = result.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") \
-                            .replace("\\n", "<br>").replace("\\r", "")
+                            .replace("\n", "<br>").replace("\r", "")
         final_res = {str(task): result_html}
-        with open(file_name, "a") as outfile:
+        with open(file_name, "a", encoding="utf-8") as outfile:
             json.dump(final_res, outfile)
-        if html_out:
-            html_begin += (
-                "<table style=\"border-style: solid; width: 100%; margin-left: auto; margin-right: auto;\" border=\"1\" width=\"100%\">"
-                "<tbody><tr style=\"background: #12294d; color: #ffffff; text-align: left;\"><td>" + task +
-                "</td></tr><tr><td style=\"text-align: left;\"><pre style=\"line-height: 0.8em;\"><span>" +
-                result_html +
-                "</span></pre></td></tr></tbody></table><br><br>"
-            )
+        html_begin += (
+            "<table style=\"border-style: solid; width: 100%; margin-left: auto; margin-right: auto;\" border=\"1\" width=\"100%\">"
+            "<tbody><tr style=\"background: #12294d; color: #ffffff; text-align: left;\"><td>" + task +
+            "</td></tr><tr><td style=\"text-align: left;\"><pre style=\"line-height: 0.8em;\"><span>" +
+            result_html +
+            "</span></pre></td></tr></tbody></table><br><br>"
+        )
     
-    print(Fore.BLUE + separator)
+    # ---- Define all scans ----
+    # Each tuple: (label, module_and_args, package_name_or_None)
+    # If package_name is True, p_name is used. If None/False, no package is appended.
+    scans = [
+        ("Package Information",         "app.package.info -a",         p_name),
+        ("Activities Information",      "app.activity.info -i -u -a",  p_name),
+        ("Broadcast Receivers Information", "app.broadcast.info -i -u -a", p_name),
+        ("Attack Surface Information",  "app.package.attacksurface",   p_name),
+        ("Android Manifest File",       "app.package.manifest",        p_name),
+        ("Native Libraries Used",       "app.package.native",          p_name),
+        ("Content Provider Information", "app.provider.info -u -a",    p_name),
+        ("Content Provider URIs",       "app.provider.finduri",        p_name),
+        ("Services Information",        "app.service.info -i -u -a",   p_name),
+    ]
     
-    package_info = perform_scan('app.package.info -a', p_name)
-    format_data("Package Information", package_info, f_json)
-    print(separator)
+    # File permission scans require BusyBox on the device
+    busybox_scans = [
+        ("World Readable Files",        f"scanner.misc.readablefiles /data/data/{p_name}/", None),
+        ("World Writable Files",        f"scanner.misc.writablefiles /data/data/{p_name}/", None),
+    ]
     
-    activity_info = perform_scan('app.activity.info -i -u -a', p_name)
-    format_data("Activities Information", activity_info, f_json)
-    print(separator)
+    # Content provider security scans
+    provider_scans = [
+        ("Content Providers Query",     "scanner.provider.finduris -a", p_name),
+        ("SQL Injection on Providers",  "scanner.provider.injection -a", p_name),
+        ("Directory Traversal via Provider", "scanner.provider.traversal -a", p_name),
+    ]
     
-    broadcast_info = perform_scan('app.broadcast.info -i -u -a', p_name)
-    format_data("Broadcast Receivers Information", broadcast_info, f_json)
-    print(separator)
+    total_scans = len(scans) + len(busybox_scans) + len(provider_scans)
+    current_scan = 0
     
-    attacksurface_info = perform_scan('app.package.attacksurface', p_name)
-    format_data("Attack Surface Information", attacksurface_info, f_json)
-    print(separator)
+    print(Fore.CYAN + f"\n🔍 Starting comprehensive drozer scan ({total_scans} checks)..." + Style.RESET_ALL)
+    print(Fore.BLUE + separator + Style.RESET_ALL)
     
-    backupapi_info = perform_scan('app.package.backup -f', p_name)
-    format_data("Package with Backup API Information", backupapi_info, f_json)
-    print(separator)
+    # ---- Run main scans ----
+    for label, module_args, pkg in scans:
+        current_scan += 1
+        print(Fore.CYAN + f"\n[{current_scan}/{total_scans}] 🔍 {label}..." + Style.RESET_ALL)
+        result = perform_scan(module_args, pkg)
+        format_data(label, result, f_json)
+        print(separator)
     
-    manifest_info = perform_scan('app.package.manifest', p_name)
-    format_data("Android Manifest File", manifest_info, f_json)
-    print(separator)
+    # ---- BusyBox scans: try to install BusyBox first ----
+    print(Fore.CYAN + f"\n📦 Setting up BusyBox for file permission scans..." + Style.RESET_ALL)
+    busybox_result = perform_scan("tools.setup.busybox")
+    if "error" in busybox_result.lower() or "failed" in busybox_result.lower():
+        print(Fore.YELLOW + "⚠️ BusyBox setup may have failed. File permission scans might not work." + Style.RESET_ALL)
+        print(Fore.YELLOW + f"   Result: {busybox_result.strip()}" + Style.RESET_ALL)
+    else:
+        print(Fore.GREEN + "✅ BusyBox ready." + Style.RESET_ALL)
     
-    nativelib_info = perform_scan('app.package.native', p_name)
-    format_data("Native Libraries used", nativelib_info, f_json)
-    print(separator)
+    for label, module_args, pkg in busybox_scans:
+        current_scan += 1
+        print(Fore.CYAN + f"\n[{current_scan}/{total_scans}] 🔍 {label}..." + Style.RESET_ALL)
+        result = perform_scan(module_args, pkg)
+        format_data(label, result, f_json)
+        print(separator)
     
-    contentprovider_info = perform_scan('app.provider.info -u -a', p_name)
-    format_data("Content Provider Information", contentprovider_info, f_json)
-    print(separator)
+    # ---- Content provider security scans ----
+    for label, module_args, pkg in provider_scans:
+        current_scan += 1
+        print(Fore.CYAN + f"\n[{current_scan}/{total_scans}] 🔍 {label}..." + Style.RESET_ALL)
+        result = perform_scan(module_args, pkg)
+        format_data(label, result, f_json)
+        print(separator)
     
-    finduri_info = perform_scan('app.provider.finduri', p_name)
-    format_data("Content Provider URIs", finduri_info, f_json)
-    print(separator)
-    
-    services_info = perform_scan('app.service.info -i -u -a', p_name)
-    format_data("Services Information", services_info, f_json)
-    print(separator)
-    
-    nativecomponents_info = perform_scan('scanner.misc.native -a', p_name)
-    format_data("Native Components in Package", nativecomponents_info, f_json)
-    print(separator)
-    
-    worldreadable_info = perform_scan('scanner.misc.readablefiles /data/data/' + p_name + '/', p_name, 1)
-    format_data("World Readable Files in App Installation Location", worldreadable_info, f_json)
-    print(separator)
-    
-    worldwriteable_info = perform_scan('scanner.misc.readablefiles /data/data/' + p_name + '/', p_name, 1)
-    format_data("World Writeable Files in App Installation Location", worldwriteable_info, f_json)
-    print(separator)
-    
-    querycp_info = perform_scan('scanner.provider.finduris -a', p_name)
-    format_data("Content Providers Query from Current Context", querycp_info, f_json)
-    print(separator)
-    
-    sqli_info = perform_scan('scanner.provider.injection -a', p_name)
-    format_data("SQL Injection on Content Providers", sqli_info, f_json)
-    print(separator)
-    
-    sqltables_info = perform_scan('scanner.provider.sqltables -a', p_name)
-    format_data("SQL Tables using SQL Injection", sqltables_info, f_json)
-    print(separator)
-    
-    dirtraversal_info = perform_scan('scanner.provider.traversal -a', p_name)
-    format_data("Directory Traversal using Content Provider", dirtraversal_info, f_json)
-    print(separator)
-    
+    # ---- Write HTML report ----
     html_begin += "</body></html>"
     with open(f_html, "wb") as f:
         f.write(html_begin.encode("utf-8"))
     
-    print("\nAll the results are stored in " + file_name + " (JSON, TXT, and HTML files).")
+    print(Fore.GREEN + f"\n✅ Scan complete! {total_scans} checks performed." + Style.RESET_ALL)
+    print(Fore.GREEN + f"📄 JSON report: {os.path.abspath(f_json)}" + Style.RESET_ALL)
+    print(Fore.GREEN + f"📄 HTML report: {os.path.abspath(f_html)}" + Style.RESET_ALL)
     print(separator)
 
 def show_exploits_menu():
     print("\n" + "=" * 50)
     print(f"{'Exploits':^50}")
     print("=" * 50)
-    print("1. 🔍  Tapjacking (Not available on Linux)")
-    print("2. 🔒  Task Hijacking (Not available on Linux)")
+    print("1. 🔍  Tapjacking")
+    print("2. 🔒  Task Hijacking")
     print("3. ↩️  Back")
 
 def exploits_menu_loop():
@@ -3217,14 +3226,10 @@ def show_frida_menu():
     print("2. ▶️  Run Frida Server")
     print("3. 📜  List installed applications")
     print("4. 🧠  Dump memory of an application")
-    print("5. 🔓  Run SSL Pinning Bypass")
-    print("6. 🛡️  Run Root Check Bypass")
-    print("7. 🔑  Android Biometric Bypass")
-    print("8. 📝  Run Custom Script")
-    print("9. ↩️  Back")
+    print("5. ↩️  Back")
 
 # Metadata
-VERSION  = "1.0.0-linux"
+VERSION  = "1.0.0"
 
 def show_main_menu():
     logo = r"""
@@ -3239,7 +3244,7 @@ def show_main_menu():
     print(Fore.CYAN + logo + Style.RESET_ALL)
 
     print(Fore.RED + " Version  : " + Fore.YELLOW + VERSION)
-    print(Fore.YELLOW + " Platform : Linux Compatible")
+    print(Fore.YELLOW + f" Platform : {platform.system()}")
     print()
 
     print("=" * 50)
@@ -3386,14 +3391,6 @@ def main():
                 elif frida_choice == '4':
                     auto_fridump()
                 elif frida_choice == '5':
-                    run_ssl_pinning_bypass()
-                elif frida_choice == '6':
-                    run_root_check_bypass()
-                elif frida_choice == '7':
-                    android_biometric_bypass()
-                elif frida_choice == '8':
-                    run_custom_frida_script() 
-                elif frida_choice == '9':
                     break
                 else:
                     print(Fore.RED + "❗ Invalid choice, please try again." + Style.RESET_ALL)

@@ -1,9 +1,9 @@
-# Redroid – Android Application Pentesting Automation Toolkit for Android Studio and Genymotion
+# Redroid – Cross-Platform Android Application Pentesting Automation Toolkit
 
 > ⚠️ **Work in Progress**  
 > Redroid is under active development. Some features may be unstable or not fully compatible across environments. Contributions and issue reports are welcome.
 
-**Redroid** is a modular toolkit designed to streamline Android application penetration testing. It automates common tasks such as:
+**Redroid** is a modular toolkit designed to streamline Android application penetration testing. It runs on **Windows** and **Linux** and automates common tasks such as:
 
 - Installing and configuring Burp certificates and frida
 - Managing proxy settings
@@ -72,4 +72,4 @@ pip install -e .
 - [ ] Add manual testing modules inside Drozer menu
 - [x] Implement real-time `logcat` streaming
 - [x] Automatic APK signing and patching
-- [ ] Ensure full cross-platform support (Windows ↔ Kali Linux)
+- [x] Ensure full cross-platform support (Windows ↔ Kali Linux)

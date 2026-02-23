@@ -19,57 +19,29 @@ Its interactive CLI interface allows operators to focus on analysis and exploita
 
 ## 🚀 Installation
 
-### ✅ Install with `pipx` (Recommended)
-
-You can install Redroid directly from GitHub using:
-
-```bash
-pipx install git+https://github.com/YoruYagami/Redroid.git
-```
-
-Once installed, the `redroid` command will be available globally:
-
-```bash
-redroid
-```
-
-### ⚙️ Manual Installation
-
 1. Clone the repository:
 ```bash
 git clone https://github.com/YoruYagami/Redroid.git
 cd Redroid
 ```
 
-2. Install the dependencies:
+2. *(Recommended)* Create and activate a virtual environment:
 ```bash
-pip install -r requirements.txt
+# Linux / macOS
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Windows
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-3. Run the tool:
+3. Install the dependencies:
+```bash
+pip3 install -r requirements.txt
+```
+
+4. Run the tool:
 ```bash
 python redroid.py
 ```
-
-### 🧪 Development Installation
-
-To contribute or make changes locally:
-
-```bash
-git clone https://github.com/YoruYagami/Redroid.git
-cd Redroid
-pip install -e .
-```
-
----
-
-## 📋 TODO
-
-- [x] Multi-device support
-- [x] Fix logic for existing modules (e.g., MobSF integration)
-- [x] Add TruffleHog-based source scanning
-- [ ] Add Firebase testing capabilities
-- [ ] Add manual testing modules inside Drozer menu
-- [x] Implement real-time `logcat` streaming
-- [x] Automatic APK signing and patching
-- [x] Ensure full cross-platform support (Windows ↔ Kali Linux)

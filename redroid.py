@@ -259,69 +259,209 @@ def get_local_ipv4_addresses():
                 ip_dict[iface_name] = addr.address
     return ip_dict
 
+def prepare_system_ca_file(der_path):
+    """Convert a DER certificate to the format the Android system trust store expects.
+
+    The system store (/system/etc/security/cacerts/) keys each CA by the OpenSSL
+    subject hash of the certificate and stores it PEM-encoded. The file MUST be named
+    "<subject_hash>.0" or Android will never load it — so we compute the hash from the
+    actual cert instead of hardcoding a filename, and convert DER -> PEM.
+
+    Returns the output filename ("<hash>.0") on success, or None on failure.
+    """
+    # Compute the subject hash Android uses to look up the CA.
+    # subject_hash_old is the pre-1.0.0 (MD5-based) algorithm AOSP relies on.
+    try:
+        hash_result = subprocess.run(
+            ["openssl", "x509", "-inform", "DER", "-in", der_path, "-subject_hash_old", "-noout"],
+            capture_output=True, text=True, check=True
+        )
+    except FileNotFoundError:
+        print(Fore.RED + "❌ 'openssl' is not installed or not on PATH; cannot prepare the certificate." + Style.RESET_ALL)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Failed to read the certificate with openssl: {e.stderr.strip()}" + Style.RESET_ALL)
+        return None
+
+    cert_hash = hash_result.stdout.strip().splitlines()[0].strip() if hash_result.stdout.strip() else ""
+    if not cert_hash:
+        print(Fore.RED + "❌ Could not compute the certificate subject hash." + Style.RESET_ALL)
+        return None
+
+    output_file = f"{cert_hash}.0"
+
+    # Convert DER -> PEM into the hash-named file.
+    try:
+        subprocess.run(
+            ["openssl", "x509", "-inform", "DER", "-in", der_path, "-out", output_file],
+            capture_output=True, text=True, check=True
+        )
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"❌ Failed to convert the certificate to PEM: {e.stderr.strip()}" + Style.RESET_ALL)
+        return None
+
+    print(Fore.GREEN + f"✅ Prepared system CA file '{output_file}' (subject hash {cert_hash})." + Style.RESET_ALL)
+    return output_file
+
+
 def try_download_certificate(ip, port):
     input_der_file = "cacert.der"
-    output_file = "9a5ba575.0"
 
-    if os.path.exists(output_file):
-        print(Fore.GREEN + f"✅ Found local certificate '{output_file}', skipping remote download." + Style.RESET_ALL)
-    else:
-        cert_url = f"http://{ip}:{port}/cert"
-        try:
-            response = requests.get(cert_url, timeout=10)
-            if response.status_code == 200:
-                with open(input_der_file, "wb") as certificate_file:
-                    certificate_file.write(response.content)
-                print(Fore.GREEN + f"✅ Certificate downloaded successfully from {cert_url}." + Style.RESET_ALL)
-                os.rename(input_der_file, output_file)
-                print(Fore.GREEN + f"✅ Renamed {input_der_file} to {output_file}." + Style.RESET_ALL)
-            else:
-                print(Fore.RED + f"❌ Unable to download the certificate from {cert_url}. Status code: {response.status_code}" + Style.RESET_ALL)
-                return False
-        except ConnectionError:
-            print(Fore.RED + f"❌ Burp Suite is not running or the proxy is not available at {ip}:{port}." + Style.RESET_ALL)
+    cert_url = f"http://{ip}:{port}/cert"
+    try:
+        response = requests.get(cert_url, timeout=10)
+        if response.status_code == 200:
+            with open(input_der_file, "wb") as certificate_file:
+                certificate_file.write(response.content)
+            print(Fore.GREEN + f"✅ Certificate downloaded successfully from {cert_url}." + Style.RESET_ALL)
+        else:
+            print(Fore.RED + f"❌ Unable to download the certificate from {cert_url}. Status code: {response.status_code}" + Style.RESET_ALL)
             return False
-        except Exception as e:
-            print(Fore.RED + f"❌ An unexpected error occurred during download: {str(e)}" + Style.RESET_ALL)
-            return False
-
-    push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
-    if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
-        print(Fore.YELLOW + "⚠️ Error: File system is read-only. Retrying with adb root and remount." + Style.RESET_ALL)
-        result_root = run_adb_command('root')
-        if result_root is None:
-            print(Fore.RED + "❌ Unable to obtain root privileges via adb." + Style.RESET_ALL)
-            return False
-        time.sleep(5)
-        result_remount = run_adb_command('remount')
-        if result_remount is None:
-            print(Fore.RED + "❌ Unable to remount the partition as writable." + Style.RESET_ALL)
-            return False
-        push_result = run_adb_command(f'push {output_file} /system/etc/security/cacerts/')
-        if push_result is None or (push_result.stderr and "read-only" in push_result.stderr.lower()):
-            print(Fore.RED + "❌ The partition is still read-only." + Style.RESET_ALL)
-            user_choice = input(Fore.YELLOW + "Would you like to reboot the device now? (y/n): " + Style.RESET_ALL).strip().lower()
-            if user_choice in ['y', 'yes']:
-                reboot_result = run_adb_command('reboot')
-                if reboot_result is None:
-                    print(Fore.RED + "❌ Failed to reboot the device. Please reboot manually." + Style.RESET_ALL)
-                else:
-                    print(Fore.GREEN + "✅ Device reboot initiated. Please try installing the certificate again after the device restarts." + Style.RESET_ALL)
-                return False
-            else:
-                print(Fore.RED + "❌ Certificate installation failed due to read-only partition." + Style.RESET_ALL)
-                return False
-
-    chmod_result = run_adb_command(f'shell chmod 644 /system/etc/security/cacerts/{output_file}')
-    if chmod_result is None:
-        print(Fore.RED + "❌ Failed to set permissions on the certificate." + Style.RESET_ALL)
+    except ConnectionError:
+        print(Fore.RED + f"❌ Burp Suite is not running or the proxy is not available at {ip}:{port}." + Style.RESET_ALL)
+        return False
+    except Exception as e:
+        print(Fore.RED + f"❌ An unexpected error occurred during download: {str(e)}" + Style.RESET_ALL)
         return False
 
-    print(Fore.GREEN + "✅ Burp Suite certificate installed successfully on the device." + Style.RESET_ALL)
+    # Convert to PEM and name the file after the cert's subject hash so Android trusts it.
+    output_file = prepare_system_ca_file(input_der_file)
+    try:
+        os.remove(input_der_file)
+    except OSError:
+        pass
+    if not output_file:
+        return False
+
+    installed = install_ca_to_system_store(output_file)
+
     try:
         os.remove(output_file)
-    except Exception as e:
+    except OSError as e:
         print(Fore.YELLOW + f"⚠️ Unable to remove local file {output_file}: {str(e)}" + Style.RESET_ALL)
+
+    return installed
+
+
+def get_android_api_level():
+    """Return the device API level (int) or None if it can't be determined."""
+    result = run_adb_command('shell getprop ro.build.version.sdk')
+    if result and result.stdout.strip().isdigit():
+        return int(result.stdout.strip())
+    return None
+
+
+def apex_cacerts_is_live():
+    """True if the Conscrypt APEX trust store is present and populated.
+
+    On Android 14+ (and some 12/13 devices that received the Conscrypt Mainline
+    update) the *live* system trust store is /apex/com.android.conscrypt/cacerts,
+    and the classic /system path is ignored. We check whether that dir has certs.
+    """
+    result = run_adb_command('shell ls /apex/com.android.conscrypt/cacerts 2>/dev/null | wc -l')
+    if result and result.stdout.strip().isdigit():
+        return int(result.stdout.strip()) > 0
+    return False
+
+
+def install_ca_to_system_store(ca_filename):
+    """Install a prepared '<subject_hash>.0' PEM CA into the device system trust store.
+
+    Cert-pinning testing needs the CA in the *system* store, not the user store
+    (apps stopped trusting user CAs by default in Android 7). Rather than trying to
+    make /system writable (dm-verity blocks this on Android 10+), we mount a tmpfs
+    overlay on the trust-store directory, repopulate it with the existing system CAs
+    plus ours, and fix up perms/SELinux context. This survives until reboot and does
+    not modify the real partition. On Android 14+ the live store lives inside the
+    Conscrypt APEX, so we target that path too when it is the active one.
+    """
+    api = get_android_api_level()
+    if api is not None:
+        print(Fore.CYAN + f"🔍 Device API level: {api} (Android SDK)." + Style.RESET_ALL)
+
+    # adb root is required to mount and to write into the trust store.
+    if run_adb_command('root') is None:
+        print(Fore.RED + "❌ Unable to obtain root via adb (device must be rootable / userdebug or Magisk)." + Style.RESET_ALL)
+        return False
+    time.sleep(3)
+
+    # Decide which trust-store directories are actually consulted on this device.
+    classic_dir = "/system/etc/security/cacerts"
+    apex_dir = "/apex/com.android.conscrypt/cacerts"
+    targets = [classic_dir]
+    use_apex = (api is not None and api >= 34) or apex_cacerts_is_live()
+    if use_apex:
+        targets.append(apex_dir)
+        print(Fore.YELLOW + "⚠️ This device uses the Conscrypt APEX trust store; targeting it as well." + Style.RESET_ALL)
+
+    # Stage the CA on the device.
+    device_cert = f"/data/local/tmp/{ca_filename}"
+    if run_adb_command(f'push {ca_filename} {device_cert}') is None:
+        print(Fore.RED + "❌ Failed to stage the certificate on the device." + Style.RESET_ALL)
+        return False
+
+    # Build a device-side script that overlays each target dir with a tmpfs and
+    # copies the original CAs plus ours into it. `set -e` is intentionally avoided
+    # so a failure on the APEX path (which needs mount-propagation tweaks) does not
+    # abort the classic-path install.
+    dirs_literal = " ".join(targets)
+    device_script = f"""#!/system/bin/sh
+CERT="{device_cert}"
+BACKUP=/data/local/tmp/redroid_cacerts_backup
+for DIR in {dirs_literal}; do
+    echo "[*] Installing into $DIR"
+    rm -rf "$BACKUP"
+    mkdir -p -m 700 "$BACKUP"
+    cp -f "$DIR"/* "$BACKUP"/ 2>/dev/null
+    # /apex is mounted private; make it rshared so a tmpfs overlay is visible to apps.
+    mount --make-rshared / 2>/dev/null
+    if ! mount -t tmpfs tmpfs "$DIR" 2>/dev/null; then
+        echo "[!] tmpfs mount failed on $DIR"
+        continue
+    fi
+    cp -f "$BACKUP"/* "$DIR"/ 2>/dev/null
+    cp -f "$CERT" "$DIR"/
+    chown 0:0 "$DIR"/* 2>/dev/null
+    chmod 644 "$DIR"/* 2>/dev/null
+    restorecon -RF "$DIR" 2>/dev/null
+    echo "[+] $DIR now has $(ls "$DIR" | wc -l) CAs"
+done
+rm -rf "$BACKUP"
+"""
+    script_path = "/data/local/tmp/redroid_install_ca.sh"
+    local_script = os.path.join(os.path.dirname(os.path.abspath(ca_filename)) or ".", "redroid_install_ca.sh")
+    try:
+        with open(local_script, "w", newline="\n") as fh:
+            fh.write(device_script)
+        push_ok = run_adb_command(f'push {local_script} {script_path}')
+    finally:
+        try:
+            os.remove(local_script)
+        except OSError:
+            pass
+    if push_ok is None:
+        print(Fore.RED + "❌ Failed to stage the install script on the device." + Style.RESET_ALL)
+        return False
+
+    result = run_adb_command(f'shell sh {script_path}')
+    run_adb_command(f'shell rm -f {script_path} {device_cert}')
+    if result is None:
+        print(Fore.RED + "❌ Trust-store install script failed to run." + Style.RESET_ALL)
+        return False
+    print(result.stdout.strip())
+
+    # Verify the CA is present in at least the primary live store.
+    verify_dir = apex_dir if use_apex else classic_dir
+    verify = run_adb_command(f'shell ls {verify_dir}/{ca_filename}')
+    if verify is None or (verify.stdout and "No such file" in verify.stdout):
+        print(Fore.RED + f"❌ Certificate not found in {verify_dir} after install." + Style.RESET_ALL)
+        return False
+
+    print(Fore.GREEN + f"✅ Burp Suite CA installed into the system trust store ({verify_dir})." + Style.RESET_ALL)
+    if use_apex:
+        print(Fore.YELLOW + "ℹ️ APEX overlays only reach apps started AFTER install, and reset on reboot. "
+              "For a persistent Android 14+ setup, use a Magisk module "
+              "(e.g. AlwaysTrustUserCerts / BurpSuiteCert)." + Style.RESET_ALL)
     return True
 
 def install_burpsuite_certificate(port):
